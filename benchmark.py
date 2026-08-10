@@ -1,30 +1,32 @@
 """
-PyPDMS 重复运行基准测试。
+Repeated-run benchmark for PyPDMS.
 
-在同一实例上用不同种子将 IRMS 求解器运行 ``n`` 次,并汇总报告:
+Runs the IRMS solver ``n`` times with different seeds on the same instance and
+reports a summary:
 
-  * 找到的最优目标值,
-  * 平均目标值,
-  * 每次运行找到其最优解的平均时刻(``Result.best_found_at_time``),以及
-  * 平均总运行时间。
+  * the best objective value found,
+  * the average objective value,
+  * the average time at which each run found its best solution
+    (``Result.best_found_at_time``), and
+  * the average total runtime.
 
-所有旋钮通过命令行传入。示例
+Every knob is passed on the command line. Examples
 -------------------------------------------------
-    # 10 次,每次 30 秒,Hamilton3000a,预算 300
+    # 10 runs, 30 seconds each, Hamilton3000a, budget 300
     python benchmark.py Instances/CNP/realworld/Hamilton3000a.txt \
         --budget 300 --runs 10 --max-runtime 30
 
-    # 以迭代次数为界的 5 次运行,自定义求解器旋钮
+    # 5 iteration-bounded runs with custom solver knobs
     python benchmark.py Instances/CNP/realworld/Bovine.txt \
         --budget 3 --runs 5 --max-iterations 200 \
         --population-size 12 --offspring-count 2 --search CHNS5
 
-    # DCNP:删除 k=20 个节点后最小化距离 D=2 之内的节点对数,
-    # 5 次,每次 120 秒(自动应用 DCNP 调优默认)
+    # DCNP: minimize the number of node pairs within distance D=2 after removing
+    # k=20 nodes, 5 runs of 120 seconds each (DCNP tuned defaults applied)
     python benchmark.py Instances/DCNP/R1/USAir97.txt \
         --problem DCNP --budget 20 --distance 2 --runs 5 --max-runtime 120
 
-    # DCNP:为大 D 实例使用更轻量的 CHNS 预算
+    # DCNP: use a lighter CHNS budget for a large-D instance
     python benchmark.py Instances/DCNP/R1/USAir97.txt \
         --problem DCNP --budget 30 --distance 3 --runs 3 --max-runtime 120 \
         --population-size 3 --chns-random-idle-product 60 \
@@ -50,65 +52,66 @@ from pypdms.stop import StoppingCriterion
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="将 PyPDMS 求解器运行 n 次并报告汇总统计。",
+        description="Run the PyPDMS solver n times and report summary statistics.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "instance",
-        help="邻接表格式的图文件路径。",
+        help="Path to the graph file in adjacency-list format.",
     )
     parser.add_argument(
         "--problem", type=str, default="CNP", choices=["CNP", "DCNP"],
-        help="要求解的问题变体。",
+        help="Problem variant to solve.",
     )
     parser.add_argument(
         "--budget", type=int, default=None,
-        help="要删除的节点数 (k);必填,须 < |V|。",
+        help="Number of nodes to remove (k); required, must be < |V|.",
     )
     parser.add_argument(
         "--distance", type=int, default=None,
-        help="DCNP 距离阈值 D(--problem DCNP 必填,D >= 1)。",
+        help="DCNP distance threshold D (required for --problem DCNP, D >= 1).",
     )
     parser.add_argument(
         "-n", "--runs", type=int, default=10,
-        help="连续运行的次数。",
+        help="Number of consecutive runs.",
     )
     parser.add_argument(
         "--seed", type=int, default=0,
-        help="基准随机种子;第 i 次运行使用 seed + i。",
+        help="Base random seed; run i uses seed + i.",
     )
 
-    # 停止准则(互斥)。未指定时默认为 30 秒运行时间。
+    # Stopping criteria (mutually exclusive). Defaults to 30 seconds of runtime.
     stop = parser.add_mutually_exclusive_group()
     stop.add_argument(
         "--max-runtime", type=float, metavar="SECONDS",
-        help="每次运行达到该秒数(墙钟)后停止。",
+        help="Stop each run after this many seconds (wall clock).",
     )
     stop.add_argument(
         "--max-iterations", type=int, metavar="N",
-        help="每次运行达到该代数后停止。",
+        help="Stop each run after this many generations.",
     )
     stop.add_argument(
         "--no-improvement", type=int, metavar="N",
-        help="每次运行在连续 N 代无改善后停止。",
+        help="Stop each run after N generations without improvement.",
     )
 
-    # 可选求解器旋钮(留空为 None -> 使用 SolverParams 默认值)。
+    # Optional solver knobs (left as None -> use the SolverParams defaults).
     parser.add_argument("--population-size", type=int, default=None)
     parser.add_argument("--offspring-count", type=int, default=None)
     parser.add_argument(
         "--search", type=str, default=None,
-        help='局部搜索策略:"CHNS"、"CHNS-ADAPT" 或 "CHNS<N>"。',
+        help='Local-search strategy: "CHNS", "CHNS-ADAPT" or "CHNS<N>".',
     )
     parser.add_argument(
         "--transfer-interval", type=int, default=None,
-        help="可行<->不可行交换之间的代数间隔。",
+        help="Generations between feasible<->infeasible exchanges.",
     )
     parser.add_argument("--partial-ratio", type=float, default=None)
     parser.add_argument("--beta", type=float, default=None)
 
-    # CHNS 局部搜索预算覆盖(None -> 使用问题相关默认)。这些是 DCNP 的主要
-    # 调参旋钮——DCNP 的目标函数每步都重建 K-hop 树,DCNP 已自动应用更轻量默认。
+    # CHNS local-search budget overrides (None -> use the problem-specific
+    # default). These are the main tuning knobs for DCNP -- its objective
+    # rebuilds K-hop trees every step, and DCNP already applies lighter defaults.
     parser.add_argument("--chns-theta", type=float, default=None)
     parser.add_argument("--chns-random-batch-max", type=int, default=None)
     parser.add_argument("--chns-random-idle-product", type=int, default=None)
@@ -117,31 +120,32 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--show-solver-log", action="store_true",
-        help="显示每次运行的求解器进度日志(默认关闭)。",
+        help="Show the solver progress log for each run (off by default).",
     )
     return parser.parse_args()
 
 
 def make_criterion_factory(args: argparse.Namespace) -> Callable[[], StoppingCriterion]:
-    """返回一个工厂,为每次运行生成*全新的*停止准则。
+    """Return a factory that produces a *fresh* stopping criterion per run.
 
-    每次运行用全新实例很重要:MaxRuntime 会重置其时钟,而
-    MaxIterations / NoImprovement 带有可变计数器,绝不能在多次运行间泄漏。
+    A fresh instance per run matters: MaxRuntime resets its clock, and
+    MaxIterations / NoImprovement carry mutable counters that must never leak
+    across runs.
     """
     if args.max_iterations is not None:
         return lambda: MaxIterations(args.max_iterations)
     if args.no_improvement is not None:
         return lambda: NoImprovement(args.no_improvement)
-    # 默认:基于运行时间,未指定时为 30 秒。
+    # Default: runtime-based, 30 seconds when unspecified.
     seconds = args.max_runtime if args.max_runtime is not None else 30.0
     return lambda: MaxRuntime(seconds)
 
 
 def build_params(args: argparse.Namespace) -> SolverParams:
-    """构建 SolverParams,只覆盖用户显式提供的字段。
+    """Build SolverParams, overriding only the fields the user supplied.
 
-    未设置的字段保持 ``None``,以便应用求解器的问题相关默认值
-    (尤其是 DCNP 更轻量的种群与 CHNS 预算)。
+    Unset fields stay ``None`` so the solver's problem-specific defaults apply
+    (in particular DCNP's lighter population and CHNS budget).
     """
     overrides = {
         key: value
@@ -168,7 +172,7 @@ def main() -> None:
 
     if args.runs < 1:
         raise SystemExit("--runs must be >= 1")
-    # 各问题变体的参数要求。
+    # Per-variant argument requirements.
     if args.problem == "DCNP" and args.distance is None:
         raise SystemExit("--distance is required for --problem DCNP")
     if args.problem != "DCNP" and args.distance is not None:
@@ -180,7 +184,7 @@ def main() -> None:
     params = build_params(args)
     make_criterion = make_criterion_factory(args)
 
-    # 按问题变体组装 solve() 的关键字参数。distance 仅 DCNP 用。
+    # Assemble solve() keyword arguments per variant. distance is DCNP-only.
     solve_kwargs: dict = {"problem": args.problem, "budget": args.budget}
     if args.problem == "DCNP":
         solve_kwargs["distance"] = args.distance
@@ -189,15 +193,16 @@ def main() -> None:
     best_found_times: list[float] = []
     runtimes: list[float] = []
 
-    # 对 DCNP,若 population_size / transfer_interval 保留为 CNP 库默认值,求解器
-    # 内部会替换为 DCNP 调优值;因此显示 "auto",而非用户并未选择的、会造成误导的
-    # 库默认值。
+    # For DCNP, if population_size / transfer_interval are left at the CNP
+    # library defaults, the solver internally substitutes DCNP-tuned values; so
+    # show "auto" rather than the misleading library defaults the user did not
+    # actually choose.
     if args.problem == "DCNP" and args.population_size is None:
         pop_display = "auto(DCNP)"
     else:
         pop_display = str(params.population_size)
 
-    # 主约束:预算 k(CNP/DCNP)。
+    # Primary constraint: budget k (CNP/DCNP).
     constraint_line = f"Budget   : {args.budget}"
     objective_label = "objective"
 

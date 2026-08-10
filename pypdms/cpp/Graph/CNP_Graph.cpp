@@ -453,7 +453,7 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
             maxSize = std::max(maxSize, static_cast<int>(size));
         }
     }
-    // 确定中位数阈值
+    // Determine the median threshold.
     const double sizeThreshold
         = maxSize - (maxSize - minSize) * 0.5 - rng_.generateIndex(3);
 
@@ -489,7 +489,7 @@ ComponentIndex CNP_Graph::selectRemovedLargerComponent() const
     size_t totalSize = numNodes_ - removedNodes.size();
     size_t numComponents = connectedComponents_.size();
 
-    // 计算平均分量的大小
+    // Compute the average component size.
     size_t avgComponentSize = std::max(
         static_cast<size_t>(2),
         static_cast<size_t>(std::round(static_cast<float>(totalSize)

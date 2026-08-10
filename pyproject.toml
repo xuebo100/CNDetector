@@ -68,9 +68,6 @@ line-length = 88
 select = [
     "E", "F", "I", "Q", "RET", "RSE", "RUF", "SIM",
 ]
-# Comments and docstrings are written in Chinese; full-width punctuation
-# （）「」，。 trips the ambiguous-unicode checks, so allow them.
-ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 case-sensitive = true

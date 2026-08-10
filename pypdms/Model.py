@@ -1,4 +1,4 @@
-"""模型入口点，用于构建图并运行 IRMS 求解器。"""
+"""Model entry point for building a graph and running the IRMS solver."""
 
 from __future__ import annotations
 
@@ -55,17 +55,19 @@ def _apply_chns_overrides(
     params: SolverParams,
     dcnp_defaults: Optional[dict[str, "int | float"]] = None,
 ) -> None:
-    """将 CHNS 局部搜索预算写入 ``config.chns``。
+    """Write the CHNS local-search budget into ``config.chns``.
 
-    优先级：``params.chns_*``（用户显式指定）> ``dcnp_defaults``（问题相关
-    的更优默认）> 原生 C++ 默认（不动 ``config.chns``）。
+    Priority: ``params.chns_*`` (explicitly set by the user) > ``dcnp_defaults``
+    (problem-specific, better defaults) > native C++ defaults (leave
+    ``config.chns`` untouched).
 
     Args:
-        config: 原生 SolverConfig，其 ``chns`` 子配置会被就地修改
-        params: 求解器参数，读取其 ``chns_*`` 覆盖字段
-        dcnp_defaults: 问题相关的 CHNS 默认（键为 chns 字段名，不含前缀）
+        config: native SolverConfig whose ``chns`` sub-config is mutated in place
+        params: solver parameters, read for its ``chns_*`` override fields
+        dcnp_defaults: problem-specific CHNS defaults (keys are chns field names,
+            without the prefix)
     """
-    # chns 字段名 -> params 上对应的覆盖属性名
+    # chns field name -> the corresponding override attribute on params
     field_to_param = {
         "max_idle_steps": "chns_max_idle_steps",
         "theta": "chns_theta",
@@ -86,20 +88,22 @@ def _apply_chns_overrides(
 def _normalize_feasible_population(
     feasible_population: list[tuple[set[int], int]],
 ) -> list[tuple[set[int], int]]:
-    """规范化可行解种群，确保解和目标值的数据类型一致。
+    """Normalize the feasible population so solutions and objectives share types.
 
     Args:
-        feasible_population: 可行解种群，每个元素为 (解集合, 目标值) 的元组
+        feasible_population: feasible population, each element a
+            (solution set, objective value) tuple
 
     Returns:
-        规范化后的种群，按目标值、解大小和解内容排序
+        The normalized population, sorted by objective value, solution size and
+        solution contents.
     """
-    # 将解转换为 set 类型，目标值转换为 int 类型，确保数据类型一致性
+    # Coerce each solution to a set and each objective to an int for consistency.
     normalized = [
         (set(solution), int(obj_value))
         for solution, obj_value in feasible_population
     ]
-    # 按目标值、解大小和解内容排序，确保结果可重复
+    # Sort by objective value, solution size and contents so results are stable.
     normalized.sort(key=lambda item: (item[1], len(item[0]), tuple(sorted(item[0]))))
     return normalized
 
@@ -107,15 +111,18 @@ def _normalize_feasible_population(
 def _compute_overlap_ratio_matrix(
     feasible_population: list[tuple[set[int], int]],
 ) -> list[list[float]]:
-    """计算可行解种群中各解之间的重叠率矩阵。
+    """Compute the pairwise overlap-ratio matrix of the feasible population.
 
-    重叠率定义为两个解的交集大小除以第一个解的大小。
+    The overlap ratio is the size of the intersection of two solutions divided
+    by the size of the first solution.
 
     Args:
-        feasible_population: 可行解种群，每个元素为 (解集合, 目标值) 的元组
+        feasible_population: feasible population, each element a
+            (solution set, objective value) tuple
 
     Returns:
-        重叠率矩阵，matrix[i][j] 表示解 i 和解 j 的重叠率
+        The overlap-ratio matrix, where ``matrix[i][j]`` is the overlap ratio of
+        solution ``i`` against solution ``j``.
     """
     overlap_ratios: list[list[float]] = []
     for solution, _ in feasible_population:
@@ -123,77 +130,77 @@ def _compute_overlap_ratio_matrix(
         row: list[float] = []
         for other_solution, _ in feasible_population:
             if denominator == 0:
-                # 如果解为空，重叠率设为 0
+                # An empty solution has an overlap ratio of 0.
                 row.append(0.0)
             else:
-                # 计算交集大小占解大小的比例
+                # Fraction of the solution covered by the intersection.
                 row.append(len(solution & other_solution) / denominator)
         overlap_ratios.append(row)
     return overlap_ratios
 
 
 class Model:
-    """图问题建模和求解类，用于关键节点问题 (Critical Node Problems)。"""
+    """Graph modeling and solving class for Critical Node Problems."""
 
     def __init__(self) -> None:
-        """初始化模型实例。"""
-        # 节点集合
+        """Initialize the model instance."""
+        # Set of nodes.
         self.nodes: set[int] = set()
-        # 邻接表表示的图结构
+        # Graph structure as an adjacency list.
         self.adj_list: list[set[int]] = []
-        # 缓存的问题数据对象
+        # Cached problem-data object.
         self._problem_data: Optional[ProblemData] = None
 
     def add_node(self, node: int) -> None:
-        """向图中添加节点。
+        """Add a node to the graph.
 
         Args:
-            node: 节点 ID，必须为非负整数
+            node: node ID, must be a non-negative integer
 
         Raises:
-            ValueError: 如果节点 ID 不是非负整数
+            ValueError: if the node ID is not a non-negative integer
         """
         if not isinstance(node, int) or node < 0:
-            raise ValueError("节点 ID 必须是非负整数。")
+            raise ValueError("Node ID must be a non-negative integer.")
         self.nodes.add(node)
-        # 扩展邻接表以容纳新节点
+        # Extend the adjacency list to accommodate the new node.
         while len(self.adj_list) <= node:
             self.adj_list.append(set())
-        # 添加节点后需要重新创建问题数据
+        # The problem data must be rebuilt after adding a node.
         self._problem_data = None
 
     def add_edge(self, u: int, v: int) -> None:
-        """向图中添加边。
+        """Add an edge to the graph.
 
-        如果边的端点不存在，会自动创建节点。
+        Missing endpoints are created automatically.
 
         Args:
-            u: 边的第一个端点
-            v: 边的第二个端点
+            u: first endpoint of the edge
+            v: second endpoint of the edge
         """
-        # 确保节点存在
+        # Make sure both endpoints exist.
         if u not in self.nodes:
             self.add_node(u)
         if v not in self.nodes:
             self.add_node(v)
-        # 扩展邻接表
+        # Extend the adjacency list.
         while len(self.adj_list) <= max(u, v):
             self.adj_list.append(set())
-        # 添加无向边（两个方向都要添加）
+        # Add the undirected edge (both directions).
         self.adj_list[u].add(v)
         self.adj_list[v].add(u)
-        # 添加边后需要重新创建问题数据
+        # The problem data must be rebuilt after adding an edge.
         self._problem_data = None
 
     @staticmethod
     def from_data(problem_data: "ProblemData") -> "Model":
-        """从 ProblemData 对象创建 Model 实例。
+        """Create a Model instance from a ProblemData object.
 
         Args:
-            problem_data: 问题数据对象
+            problem_data: problem-data object
 
         Returns:
-            创建的 Model 实例
+            The created Model instance.
         """
         model = Model()
         model.nodes = set(problem_data.get_nodes_set())
@@ -203,27 +210,27 @@ class Model:
 
     @property
     def problem_data(self) -> "ProblemData":
-        """获取问题数据对象，如果不存在则创建。"""
+        """Return the problem-data object, creating it if it does not exist."""
         if self._problem_data is None:
             self._problem_data = self._create_problem_data()
         return self._problem_data
 
     def _create_problem_data(self) -> "ProblemData":
-        """创建 ProblemData 对象。
+        """Create the ProblemData object.
 
         Returns:
-            创建的 ProblemData 对象
+            The created ProblemData object.
         """
         from ._pypdms import ProblemData
 
-        # 确定最大节点 ID
+        # Determine the largest node ID.
         max_node_id = max(self.nodes) if self.nodes else 0
-        # 创建问题数据对象，大小为最大节点 ID + 1
+        # Create the problem data with size max node ID + 1.
         problem_data = ProblemData(max_node_id + 1)
-        # 添加所有节点
+        # Add all nodes.
         for node in self.nodes:
             problem_data.add_node(node)
-        # 添加所有边（只添加一次，u < v 避免重复）
+        # Add every edge once (u < v avoids duplicates).
         for u in range(len(self.adj_list)):
             for v in self.adj_list[u]:
                 if u < v:
@@ -245,42 +252,44 @@ class Model:
         problem: str = CNP,
         distance: Optional[int] = None,
     ) -> Result:
-        """求解图上的关键节点问题。
+        """Solve a Critical Node Problem on the graph.
 
-        通过 ``problem`` 参数支持两种问题变体：
+        Two problem variants are supported via the ``problem`` argument:
 
-        - ``"CNP"`` (默认): 预算约束 CNP。给定 ``budget`` ``k``,
-          最小化剩余成对连通性 ``Σ |C|(|C|-1)/2``。
-        - ``"DCNP"``: 距离关键节点问题。给定 ``budget`` ``k`` 和距离
-          ``distance`` ``D``，最小化剩余图中距离不超过 ``D`` 的无序节点对数。
+        - ``"CNP"`` (default): budget-constrained CNP. Given ``budget`` ``k``,
+          minimize the residual pairwise connectivity ``Σ |C|(|C|-1)/2``.
+        - ``"DCNP"``: distance-based Critical Node Problem. Given ``budget``
+          ``k`` and distance ``distance`` ``D``, minimize the number of unordered
+          node pairs at distance at most ``D`` in the residual graph.
 
         Parameters
         ----------
         budget
-            要移除的节点数（必需，``1 <= budget < |V|``）。
+            Number of nodes to remove (required, ``1 <= budget < |V|``).
         stopping_criterion
-            返回 ``True`` 时求解器停止的可调用对象。
+            Callable that stops the solver when it returns ``True``.
         seed
-            随机数生成器种子。``0`` 是有效种子。
+            Random number generator seed. ``0`` is a valid seed.
         params
-            可调求解器参数。默认为 :class:`SolverParams()`。
+            Tunable solver parameters. Defaults to :class:`SolverParams()`.
         population_size, offspring_count, search
-            对应 ``params`` 字段的便捷覆盖。
+            Convenience overrides for the corresponding ``params`` fields.
         display_interval
-            迭代日志行之间的最小秒数。默认为 ``params.display_interval``。
+            Minimum seconds between iteration log lines. Defaults to
+            ``params.display_interval``.
         display
-            如果为 ``True``，将进度记录到包日志器。
+            If ``True``, log progress to the package logger.
         collect_stats
-            如果为 ``True``，在 :attr:`Result.stats` 中记录每次迭代的追踪。
+            If ``True``, record a per-iteration trace in :attr:`Result.stats`.
         problem
-            ``"CNP"`` (默认) 或 ``"DCNP"``。
+            ``"CNP"`` (default) or ``"DCNP"``.
         distance
-            DCNP 距离阈值 ``D``（DCNP 必需，``D >= 1``）。
+            DCNP distance threshold ``D`` (required for DCNP, ``D >= 1``).
         """
         if stopping_criterion is None:
-            raise ValueError("stopping_criterion 是必需的")
+            raise ValueError("stopping_criterion is required")
 
-        # 解析参数，应用直接关键字覆盖
+        # Resolve parameters, applying the direct keyword overrides.
         params = self._resolve_params(
             params, population_size, offspring_count, search
         )
@@ -289,31 +298,33 @@ class Model:
             else params.display_interval
         )
 
-        # 规范化问题名称
+        # Normalize the problem name.
         normalized_problem = str(problem).upper().replace("_", "-")
         if normalized_problem == DCNP:
             if not isinstance(budget, int) or budget < 1:
-                raise ValueError("budget 必须是正整数")
+                raise ValueError("budget must be a positive integer")
             if budget >= len(self.nodes):
                 raise ValueError(
-                    f"预算 ({budget}) 必须小于节点数 ({len(self.nodes)})"
+                    f"budget ({budget}) must be smaller than the number of "
+                    f"nodes ({len(self.nodes)})"
                 )
             if not isinstance(distance, int) or distance < 1:
-                raise ValueError("distance 必须是 DCNP 的正整数")
+                raise ValueError("distance must be a positive integer for DCNP")
             return self._solve_dcnp(
                 budget, distance, stopping_criterion, seed, params,
                 effective_display_interval, display, collect_stats,
             )
 
         if normalized_problem != CNP:
-            raise ValueError(f"未知问题 {problem!r}; 期望 'CNP' 或 'DCNP'")
+            raise ValueError(f"unknown problem {problem!r}; expected 'CNP' or 'DCNP'")
 
-        # 验证预算参数
+        # Validate the budget argument.
         if not isinstance(budget, int) or budget < 1:
-            raise ValueError("budget 必须是正整数")
+            raise ValueError("budget must be a positive integer")
         if budget >= len(self.nodes):
             raise ValueError(
-                f"预算 ({budget}) 必须小于节点数 ({len(self.nodes)})"
+                f"budget ({budget}) must be smaller than the number of "
+                f"nodes ({len(self.nodes)})"
             )
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
@@ -330,26 +341,26 @@ class Model:
         offspring_count: Optional[int],
         search: Optional[str],
     ) -> SolverParams:
-        """在 ``SolverParams`` 之上应用直接关键字覆盖。
+        """Apply direct keyword overrides on top of ``SolverParams``.
 
-        使用 :func:`dataclasses.replace` 以便覆盖值被重新验证，
-        且调用者的 ``params`` 实例永远不会被修改。
+        Uses :func:`dataclasses.replace` so overrides are re-validated and the
+        caller's ``params`` instance is never mutated.
 
         Args:
-            params: 求解器参数对象
-            population_size: 种群大小覆盖
-            offspring_count: 后代数量覆盖
-            search: 搜索策略覆盖
+            params: solver parameters object
+            population_size: population-size override
+            offspring_count: offspring-count override
+            search: search-strategy override
 
         Returns:
-            解析后的求解器参数
+            The resolved solver parameters.
         """
         from dataclasses import replace
 
         if params is None:
             params = SolverParams()
 
-        # 构建覆盖字典，只包含非 None 的值
+        # Build the override dict with the non-None values only.
         overrides: dict[str, Any] = {
             key: value
             for key, value in (
@@ -360,7 +371,8 @@ class Model:
             if value is not None
         }
         return replace(params, **overrides) if overrides else params
-    # 求解CNP 问题，调用_run_solver
+
+    # Solve the CNP problem by calling _run_solver.
     def _solve_fixed_budget(
         self,
         budget: int,
@@ -372,32 +384,34 @@ class Model:
         collect_stats: bool,
         max_runtime: Optional[float],
     ) -> Result:
-        """在固定预算下运行一次 IRMS 搜索，最小化成对连通性 (CNP1)。
+        """Run one IRMS search at a fixed budget, minimizing pairwise
+        connectivity (CNP1).
 
-        ``max_runtime`` (秒) 为正时，作为硬墙钟截止时间推送到原生求解器，
-        以便它可以在种群初始化和单代内停止。
+        When ``max_runtime`` (seconds) is positive it is pushed to the native
+        solver as a hard wall-clock deadline, so it can stop during population
+        initialization and within a single generation.
 
         Args:
-            budget: 移除节点的预算
-            stopping_criterion: 停止准则
-            seed: 随机种子
-            params: 求解器参数
-            effective_display_interval: 有效显示间隔
-            display: 是否显示进度
-            collect_stats: 是否收集统计信息
-            max_runtime: 最大运行时间
+            budget: budget of nodes to remove
+            stopping_criterion: stopping criterion
+            seed: random seed
+            params: solver parameters
+            effective_display_interval: effective display interval
+            display: whether to display progress
+            collect_stats: whether to collect statistics
+            max_runtime: maximum runtime
 
         Returns:
-            求解结果
+            The solve result.
         """
         from ._pypdms import SolverConfig
 
-        # 创建原始图
+        # Create the original graph.
         original_graph = self.problem_data.create_original_graph(
             budget, seed
         )
 
-        # 配置求解器
+        # Configure the solver.
         config = SolverConfig()
         config.population_size = params.population_size
         config.offspring_count = params.offspring_count
@@ -427,27 +441,31 @@ class Model:
         display: bool,
         collect_stats: bool,
     ) -> Result:
-        """求解固定预算 DCNP，采用与 CNP 相同的双种群 IRMS 流程。
+        """Solve fixed-budget DCNP with the same dual-population IRMS flow as CNP.
 
-        目标值是删除 ``budget`` 个节点后，剩余图中距离不超过
-        ``distance`` 的无序节点对数量；值越小越好。
+        The objective is the number of unordered node pairs at distance at most
+        ``distance`` in the graph after removing ``budget`` nodes; lower is
+        better.
 
-        求解过程与 CNP 完全一致：维护可行（预算 ``k``）与不可行
-        （部分预算 ``⌊k * partial_ratio⌋``）两个种群，每代通过
-        RSC 交叉加 CHNS 局部搜索产生后代，并按成本 + 多样性排名
-        裁剪种群；每隔 ``transfer_interval`` 代把不可行种群的最优解
-        补全到完整预算后注入可行种群。
+        The process is identical to CNP: maintain a feasible (budget ``k``) and
+        an infeasible (partial budget ``⌊k * partial_ratio⌋``) population, each
+        generation producing offspring via RSC crossover plus CHNS local search
+        and pruning the population by cost + diversity ranking; every
+        ``transfer_interval`` generations the best infeasible solution is
+        completed to the full budget and injected into the feasible population.
         """
         from ._pypdms import SolverConfig
 
-        # 创建原始 DCNP 图
+        # Create the original DCNP graph.
         original_graph = self.problem_data.create_original_dcnp_graph(
             budget, distance, seed
         )
 
-        # DCNP 单次 CHNS 昂贵，大种群/长交换间隔（CNP 默认 6/50）会让种群
-        # 在时间预算内几乎跑不完初始化、交换也永不触发。若调用者未显式改动
-        # 这两个值（仍为库默认），替换为更适合 DCNP 的小种群 + 短交换间隔。
+        # A single CHNS run is expensive for DCNP; a large population / long
+        # exchange interval (the CNP defaults, 6 / 50) means the population
+        # barely finishes initialization within a time budget and the exchange
+        # never fires. If the caller left these at the library defaults, replace
+        # them with a small population + short exchange interval better for DCNP.
         dcnp_population_size = (
             _DCNP_POPULATION_SIZE
             if params.population_size == DEFAULT_POPULATION_SIZE
@@ -459,7 +477,7 @@ class Model:
             else params.transfer_interval
         )
 
-        # 配置求解器（与 CNP 路径一致）
+        # Configure the solver (same as the CNP path).
         config = SolverConfig()
         config.population_size = dcnp_population_size
         config.offspring_count = params.offspring_count
@@ -470,10 +488,11 @@ class Model:
         config.display_interval = effective_display_interval
         config.search = params.search
 
-        # DCNP 的目标函数每步重建 K-hop 树，单次 CHNS 比 CNP 贵得多。
-        # 默认的 randomize idle 预算（可到 1000+ 步）在中等实例上会让
-        # 单次局部搜索耗时数十秒、种群跑不动。这里为 DCNP 设更轻量的
-        # CHNS 默认预算；params.chns_* 若显式给出则覆盖。
+        # DCNP's objective rebuilds K-hop trees every step, so a single CHNS run
+        # is far more expensive than in CNP. The default randomize-idle budget
+        # (up to 1000+ steps) makes one local search take tens of seconds on
+        # medium instances and the population stalls. Set lighter CHNS defaults
+        # for DCNP here; explicit params.chns_* still override them.
         _apply_chns_overrides(config, params, dcnp_defaults=_DCNP_CHNS_DEFAULTS)
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
@@ -497,20 +516,21 @@ class Model:
         collect_stats: bool,
         dcnp: bool = False,
     ) -> Result:
-        """运行双种群求解器（CNP 与 DCNP 共用）。
+        """Run the dual-population solver (shared by CNP and DCNP).
 
         Args:
-            original_graph: 原始图对象（CNP_Graph 或 DCNP_Graph）
-            budget: 预算
-            config: 求解器配置
-            stopping_criterion: 停止准则
-            display: 是否显示进度
-            display_interval: 显示间隔
-            collect_stats: 是否收集统计信息
-            dcnp: 是否为 DCNP 问题（选择对应的双种群实现）
+            original_graph: the original graph object (CNP_Graph or DCNP_Graph)
+            budget: budget
+            config: solver configuration
+            stopping_criterion: stopping criterion
+            display: whether to display progress
+            display_interval: display interval
+            collect_stats: whether to collect statistics
+            dcnp: whether this is a DCNP problem (selects the dual-population
+                implementation)
 
         Returns:
-            求解结果
+            The solve result.
         """
         from ._pypdms import DCNPDualPopulation, DualPopulation
 
@@ -518,16 +538,17 @@ class Model:
 
         start_time = time.perf_counter()
 
-        # 将基于时间的准则时钟与实际求解器启动对齐，
-        # 以便报告的运行时间和原生截止时间共享一个参考。
-        # 否则准则的时钟会在构造时启动（在图设置之前），
-        # 缩小有效预算。
+        # Align the time-based criterion clock with the actual solver start so
+        # the reported runtime and the native deadline share one reference.
+        # Otherwise the criterion's clock starts at construction time (before
+        # the graph is set up), shrinking the effective budget.
         if hasattr(stopping_criterion, "start_time"):
             stopping_criterion.start_time = start_time
 
-        # 不可行解移除的节点少于预算允许的，
-        # 上限为 budget-1 以便它们保持严格不可行（且 >=1 以便种群有东西演化）。
-        # 当 budget=1 时我们回退到 1，这等于可行预算。
+        # The infeasible solution removes fewer nodes than the budget allows,
+        # capped at budget-1 so it stays strictly infeasible (and >=1 so the
+        # population has something to evolve). When budget=1 we fall back to 1,
+        # which equals the feasible budget.
         infeasible_budget = max(1, min(
             math.floor(budget * config.partial_ratio),
             budget - 1,
@@ -556,12 +577,12 @@ class Model:
         idle_generations = 0
         stats: list[dict] = []
 
-        # 主求解循环
+        # Main solve loop.
         while not stopping_criterion(best_obj_value):
             population.advance_one_generation()
             iterations += 1
 
-            # 处理交换事件
+            # Handle exchange events.
             for event in population.drain_exchange_events():
                 report = event.report
                 printer.exchange(event.iteration, {
@@ -572,7 +593,7 @@ class Model:
                         report.first_population_improved_best,
                 })
 
-            # 处理迭代事件
+            # Handle iteration events.
             for iter_event in population.drain_iteration_events():
                 elapsed = time.perf_counter() - start_time
                 if iter_event.best_objective < best_obj_value:
@@ -596,13 +617,13 @@ class Model:
                     idle_generations, iter_event.population_size,
                 )
 
-        # 获取最终解
+        # Fetch the final solution.
         final_sol, final_obj = population.get_best_feasible_solution()
         best_solution = set(final_sol)
         best_obj_value = min(best_obj_value, final_obj)
         runtime = time.perf_counter() - start_time
 
-        # 规范化可行解种群
+        # Normalize the feasible population.
         raw_pop = population.get_feasible_population()
         feasible_population = _normalize_feasible_population(
             [(set(s), v) for s, v in raw_pop]
