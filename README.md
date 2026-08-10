@@ -1,39 +1,43 @@
 # PyPDMS
 
-一个高性能的**关键节点问题(Critical Node Problem, CNP)** Python 求解器,采用
-**IRMS**(*Iterative Ruin and Memetic Search*,迭代破坏与模因搜索)——一种基于
-种群的双模因元启发式算法。PyPDMS 将高速的 C++ 内核(通过 pybind11)与简洁的
-Python API 结合在一起。
+A high-performance Python solver for the **Critical Node Problem (CNP)**, using
+**IRMS** (*Iterative Ruin and Memetic Search*) — a population-based dual memetic
+metaheuristic. PyPDMS combines a fast C++ core (via pybind11) with a clean
+Python API.
 
-关键节点问题要解决的是:给定一张图和预算 `k`,应删除哪 `k` 个顶点,才能最小化
-剩余的成对连通性(即所有剩余连通分量上 `|C|*(|C|-1)/2` 之和)?
+The Critical Node Problem asks: given a graph and a budget `k`, which `k`
+vertices should be removed to minimize the residual pairwise connectivity (the
+sum of `|C|*(|C|-1)/2` over all remaining connected components)?
 
-PyPDMS 通过统一的入口 `Model.solve` 求解两种变体:
+PyPDMS solves two variants through the single entry point `Model.solve`:
 
-- **CNP**(`problem="CNP"`,默认):给定预算 `k`,最小化剩余成对连通性。
-- **DCNP**(`problem="DCNP"`):*基于距离* CNP —— 给定预算 `k` 和距离 `D`,
-  最小化剩余图中最短路距离不超过 `D` 的无序节点对数。
+- **CNP** (`problem="CNP"`, default): given a budget `k`, minimize the residual
+  pairwise connectivity.
+- **DCNP** (`problem="DCNP"`): the *distance-based* CNP — given a budget `k` and
+  a distance `D`, minimize the number of unordered node pairs whose shortest-path
+  distance is at most `D` in the residual graph.
 
-## 安装
+## Installation
 
-PyPDMS 使用 Meson + Ninja + pybind11 从源码构建。
+PyPDMS is built from source with Meson + Ninja + pybind11.
 
 ```bash
 pip install -e . --no-build-isolation
 ```
 
-修改 C++ 代码后,如需单独重编译原生扩展:
+After editing the C++ code, to recompile just the native extension:
 
 ```bash
 python buildtools/build_extensions.py --build_type release
 ```
 
-依赖要求:
+Requirements:
 - Python ≥ 3.9
-- 支持 C++20 的编译器(clang ≥ 17、gcc ≥ 11 或 MSVC 2022)
-- `meson`、`ninja`、`pybind11`(由 `build` 依赖组自动引入)
+- A C++20-capable compiler (clang ≥ 17, gcc ≥ 11, or MSVC 2022)
+- `meson`, `ninja`, `pybind11` (pulled in automatically by the `build`
+  dependency group)
 
-## 快速上手
+## Quick start
 
 ```python
 from pypdms import Model, MaxIterations
@@ -58,23 +62,25 @@ print(f"Removed nodes:  {sorted(result.best_solution)}")
 print(f"Runtime:        {result.runtime:.2f}s")
 ```
 
-### 从文件读取图
+### Reading a graph from a file
 
 ```python
 import pypdms
 from pypdms import Model, MaxRuntime
 
-problem = pypdms.read("path/to/graph.adj")  # 邻接表格式
+problem = pypdms.read("path/to/graph.adj")  # adjacency-list format
 model = Model.from_data(problem)
 result = model.solve(budget=100, stopping_criterion=MaxRuntime(60), seed=1)
 ```
 
-`pypdms.read()` 也会自动识别 DIMACS 边表文件(`p edge n m` 加若干 `e u v` 行),
-即随包附带的 `Instances/DCNP` 数据所用的格式。
+`pypdms.read()` also auto-detects DIMACS edge-list files (a `p edge n m` line
+plus several `e u v` lines), the format used by the bundled `Instances/DCNP`
+data.
 
-## 基于距离的 CNP(DCNP)
+## Distance-based CNP (DCNP)
 
-DCNP 在恰好删除 `budget` 个节点后,最小化仍处于 `D` 跳之内的节点对数量。
+DCNP minimizes the number of node pairs still within `D` hops after removing
+exactly `budget` nodes.
 
 ```python
 import pypdms
@@ -95,45 +101,55 @@ print(f"Best D-hop pairs: {result.best_obj_value}")
 print(f"Removed nodes:    {sorted(result.best_solution)}")
 ```
 
-DCNP 采用与 CNP **完全相同的双种群模因搜索**(可行 + 不可行两个种群、RSC 交叉、
-CHNS 局部搜索、周期性交换)。区别在于成本:DCNP 的目标函数每一步 CHNS 都要重建
-K-hop 树,因此单次局部搜索远比 CNP 昂贵(300 节点实例上要数十秒,而 CNP 是毫秒
-级)。正因如此,DCNP 使用**一套不同的默认超参数**,并自动应用:
+DCNP uses the **exact same dual-population memetic search** as CNP (feasible +
+infeasible populations, RSC crossover, CHNS local search, periodic exchange).
+The difference is cost: DCNP's objective rebuilds the K-hop tree on every CHNS
+step, so a single local search is far more expensive than in CNP (tens of
+seconds on a 300-node instance, versus milliseconds for CNP). Because of this,
+DCNP uses a **different set of default hyperparameters**, applied automatically:
 
-| 旋钮 | CNP 默认 | DCNP 默认 | 原因 |
-|------|----------|-----------|------|
-| `population_size` | 6 | **4** | 初始化成本 = `种群 x 2 x 单次CHNS`;更小的种群才能在时间预算内跑完初始化并完成迭代更替。 |
-| `transfer_interval` | 50 | **5** | 总共只跑几十代,间隔太大则交换永不触发。 |
-| CHNS `random_idle_product` | 2000 | **100** | 限制单次的空闲步预算;在 `D=2` 下把单次 CHNS 提速约 3 倍且质量不降。 |
-| CHNS `random_min_idle_steps` | 40 | **20** | 大 `D` 时的约束下限,此时每次目标评估都很贵。 |
-| CHNS `random_max_idle_steps` | 1000 | **80** | 同为空闲步预算上限。 |
-| CHNS `random_batch_max` | 50 | **15** | 每步更小的破坏批规模。 |
+| Knob | CNP default | DCNP default | Why |
+|------|-------------|--------------|-----|
+| `population_size` | 6 | **4** | Initialization cost = `population x 2 x one CHNS`; a smaller population is needed to finish initialization and turn over within a time budget. |
+| `transfer_interval` | 50 | **5** | Only a few dozen generations run in total; too large an interval means the exchange never fires. |
+| CHNS `random_idle_product` | 2000 | **100** | Caps the per-run idle-step budget; at `D=2` this speeds up a single CHNS run about 3x with no quality loss. |
+| CHNS `random_min_idle_steps` | 40 | **20** | A binding floor for large `D`, where each objective evaluation is expensive. |
+| CHNS `random_max_idle_steps` | 1000 | **80** | Likewise a ceiling on the idle-step budget. |
+| CHNS `random_batch_max` | 50 | **15** | A smaller ruin batch size per step. |
 
-`population_size` / `transfer_interval` 的替换**仅在你把它们保留为库默认值时**
-生效;传入显式值(或 `SolverParams` 上任意 `chns_*` 字段)即可覆盖。这些默认值是
-在 100–500 节点的实例(USAir97、Circuit、Ecoli)上以数分钟预算调出来的。若沿用
-旧的 CNP 默认,DCNP 在 USAir97(`k=30, D=3`)下 180 秒内跑 **0** 代——种群始终走
-不出初始化;换用 DCNP 默认后即可正常演化。
+The `population_size` / `transfer_interval` substitution applies **only when you
+leave them at the library defaults**; passing an explicit value (or any `chns_*`
+field on `SolverParams`) overrides it. These defaults were tuned on 100–500 node
+instances (USAir97, Circuit, Ecoli) with a few-minute budget. With the old CNP
+defaults, DCNP runs **0** generations in 180 seconds on USAir97 (`k=30, D=3`) —
+the population never escapes initialization; with the DCNP defaults it evolves
+normally.
 
-> **关于大 `D` 的说明。** 当 `D >= 3` 时,成本由 K-hop 树的 BFS 维护主导。剖析
-> 发现瓶颈并非目标求和(已是 O(n)),也非贪心选点扫描,而是 `bfsKTree` 这一
-> BFS 热路径本身。现已对其做了**精确的数据结构优化**(把邻接表铺平为 CSR、用
-> `vector<uint8_t>` 标志数组替代内层每条边的哈希查找),在保持目标值逐字节一致
-> 的前提下,把单次 CHNS 提速约 **2.7–3.6 倍**(USAir97 `k=30, D=3`:约 29s → 约
-> 11s;`k=20, D=2`:约 11s → 约 3s)。至此 `D >= 3` 的中等实例也能在数分钟预算内
-> 正常演化。
+> **A note on large `D`.** When `D >= 3`, cost is dominated by the BFS
+> maintenance of the K-hop tree. Profiling showed the bottleneck is neither the
+> objective sum (already O(n)) nor the greedy selection scan, but the `bfsKTree`
+> BFS hot path itself. It has been given a **precise data-structure
+> optimization** (flattening the adjacency list into CSR, and replacing the
+> per-inner-edge hash lookup with a `vector<uint8_t>` flag array), which speeds
+> up a single CHNS run about **2.7–3.6x** while keeping the objective value
+> byte-for-byte identical (USAir97 `k=30, D=3`: ~29s → ~11s; `k=20, D=2`: ~11s →
+> ~3s). This lets medium `D >= 3` instances evolve normally within a few-minute
+> budget.
 >
-> 进一步的*完全增量式*目标(删点时只更新受影响的点对而完全不重跑 BFS)理论上
-> 可行,但因为删除一个节点会使许多点对的最短路变长,精确增量更新的代价与现在的
-> 部分 BFS 相当,收益有限。对更大实例的 `D >= 3`,仍可用更小的
-> `population_size=3` 和 `chns_random_min_idle_steps=10` 进一步压低单次成本。
+> A further *fully incremental* objective (updating only the affected pairs on a
+> removal, without rerunning BFS at all) is possible in theory, but because
+> removing a node lengthens the shortest path of many pairs, the cost of a
+> precise incremental update is comparable to the current partial BFS, so the
+> payoff is limited. For `D >= 3` on larger instances, you can still push the
+> per-run cost down further with a smaller `population_size=3` and
+> `chns_random_min_idle_steps=10`.
 
-如需进一步调优,CHNS 预算通过 `SolverParams` 暴露:
+For further tuning, the CHNS budget is exposed through `SolverParams`:
 
 ```python
 from pypdms import Model, MaxRuntime, SolverParams
 
-# 例如为大 D 实例把 DCNP 调得更轻量
+# e.g. make DCNP lighter for a large-D instance
 params = SolverParams(
     population_size=3,
     transfer_interval=5,
@@ -146,54 +162,65 @@ result = model.solve(problem="DCNP", budget=30, distance=3,
                      stopping_criterion=MaxRuntime(120), seed=1, params=params)
 ```
 
-### DCNP 进一步加速的方向
+### Directions for speeding up DCNP further
 
-CSR + 标志数组的热路径优化已落地(零风险、精确)。若还需更快,按性价比排序,
-以下方向尚未实现,供参考:
+The CSR + flag-array hot-path optimization is already in place (zero-risk,
+exact). If you need more speed, the following directions — ranked by
+cost/benefit — are not yet implemented, for reference:
 
-1. **候选列表 / 邻域限制**(下一个性价比选择)。`findBestNodeToRemove` 目前对
-   每个活跃节点做一次精确"试删"评估;可先用便宜的代理(节点度、`treeSize_`、
-   或预计算的介数中心性)预筛出 top-M 候选,只对它们精确评估。把 O(n) 次精确
-   评估降到 O(M)(M << n)。剖析显示这一步并非当前瓶颈,故加速有限且会带来
-   *微小的质量波动*(不再是精确同解)。
-2. **并行化**。`findBestNodeToRemove` 的各候选评估相互独立,可用 OpenMP 并行。
-   但当前评估通过 `removeNode`/`addNode` **修改**共享图状态,需先实现一个
-   *非变异*的"试删"增量评估器(只算目标差值、不改 `intree_`/`treeSize_`),
-   属于较大重构。
-3. **更激进的问题相关默认**。对更大实例的 `D >= 3`,用更小的
-   `population_size=3` 配合更低的 `chns_random_min_idle_steps`(如 10)进一步压低
-   单次 CHNS 成本,以换取更多代数。这是纯参数手段,无需改代码。
-4. **完全增量式目标**(收益存疑)。删点时只更新受影响的点对而完全不重跑 BFS。
-   因为删除一个节点会使许多点对的最短路变长,精确增量更新的代价与现有的部分
-   BFS 相当,预计收益有限——除非配合近似(容忍目标值的小误差)。
+1. **Candidate list / neighborhood restriction** (the next best cost/benefit
+   choice). `findBestNodeToRemove` currently does one precise "trial removal"
+   evaluation per active node; you could pre-filter the top-M candidates with a
+   cheap proxy (node degree, `treeSize_`, or precomputed betweenness centrality)
+   and evaluate only those precisely. This drops O(n) precise evaluations to
+   O(M) (M << n). Profiling shows this step is not the current bottleneck, so
+   the speedup is limited and it introduces *small quality variance* (no longer
+   exactly the same solution).
+2. **Parallelization**. The per-candidate evaluations in
+   `findBestNodeToRemove` are independent and could be parallelized with OpenMP.
+   But the current evaluation **mutates** shared graph state via
+   `removeNode`/`addNode`, so it would first require a *non-mutating* trial
+   incremental evaluator (computing only the objective delta without touching
+   `intree_`/`treeSize_`), which is a larger refactor.
+3. **More aggressive problem-specific defaults**. For `D >= 3` on larger
+   instances, use a smaller `population_size=3` together with a lower
+   `chns_random_min_idle_steps` (e.g. 10) to push the per-run CHNS cost down
+   further in exchange for more generations. This is purely a parameter change,
+   no code needed.
+4. **Fully incremental objective** (questionable payoff). Update only the
+   affected pairs on a removal without rerunning BFS at all. Because removing a
+   node lengthens the shortest path of many pairs, the cost of a precise
+   incremental update is comparable to the existing partial BFS, so the expected
+   payoff is limited — unless combined with an approximation (tolerating a small
+   error in the objective value).
 
-## 停止准则
+## Stopping criteria
 
-PyPDMS 内置三种停止准则:
+PyPDMS ships with three stopping criteria:
 
-| 类 | 说明 |
-|----|------|
-| `MaxIterations(n)` | 运行 `n` 次求解器迭代后停止 |
-| `MaxRuntime(s)`    | 运行 `s` 秒墙钟时间后停止 |
-| `NoImprovement(n)` | 当最优目标连续 `n` 次迭代未改善时停止 |
+| Class | Description |
+|-------|-------------|
+| `MaxIterations(n)` | Stop after `n` solver iterations |
+| `MaxRuntime(s)`    | Stop after `s` seconds of wall-clock time |
+| `NoImprovement(n)` | Stop when the best objective has not improved for `n` consecutive iterations |
 
-停止准则可以是任何符合 `Callable[[float], bool]` 的可调用对象,因此你也可以自定义
-(例如目标阈值、外部信号)。
+A stopping criterion can be any callable matching `Callable[[float], bool]`, so
+you can define your own (e.g. an objective threshold, or an external signal).
 
-## 求解器参数
+## Solver parameters
 
-传入 `SolverParams` 来调节搜索:
+Pass a `SolverParams` to tune the search:
 
 ```python
 from pypdms import Model, MaxIterations, SolverParams
 
 params = SolverParams(
-    population_size=10,      # 每个(可行/不可行)种群的规模
-    offspring_count=2,       # 每代每个种群生成的后代数
-    transfer_interval=50,    # 可行↔不可行交换之间的代数间隔
-    partial_ratio=0.95,      # 不可行预算 = floor(budget * partial_ratio)
-    beta=0.9,                # RSC 交叉保留共享节点的概率
-    search="CHNS",           # 局部搜索策略
+    population_size=10,      # size of each (feasible/infeasible) population
+    offspring_count=2,       # offspring generated per population per generation
+    transfer_interval=50,    # generations between feasible<->infeasible exchanges
+    partial_ratio=0.95,      # infeasible budget = floor(budget * partial_ratio)
+    beta=0.9,                # probability RSC crossover keeps shared nodes
+    search="CHNS",           # local-search strategy
 )
 
 result = model.solve(
@@ -204,68 +231,70 @@ result = model.solve(
 )
 ```
 
-`SolverParams` 还提供若干 `chns_*` 字段,用于覆盖 CHNS 局部搜索预算
-(`chns_random_idle_product`、`chns_random_min_idle_steps`、
-`chns_random_max_idle_steps`、`chns_random_batch_max`、`chns_theta`、
-`chns_max_idle_steps`)。它们默认为 `None`(使用原生默认,针对 CNP 调优);对
-**DCNP** 最为关键——见上文 DCNP 一节。
+`SolverParams` also provides several `chns_*` fields to override the CHNS
+local-search budget (`chns_random_idle_product`, `chns_random_min_idle_steps`,
+`chns_random_max_idle_steps`, `chns_random_batch_max`, `chns_theta`,
+`chns_max_idle_steps`). They default to `None` (use the native defaults, tuned
+for CNP); they matter most for **DCNP** — see the DCNP section above.
 
-### 搜索策略
+### Search strategies
 
-`params.search` 接受:
-- `"CHNS"` —— 随机化批规模与空闲步(默认,自适应)
-- `"CHNS-ADAPT"` —— 基于空闲步的自适应批增长
-- `"CHNS<N>"` —— 固定批规模 N(例如 `"CHNS5"`)
+`params.search` accepts:
+- `"CHNS"` — randomized batch size and idle steps (default, adaptive)
+- `"CHNS-ADAPT"` — idle-step-based adaptive batch growth
+- `"CHNS<N>"` — fixed batch size N (e.g. `"CHNS5"`)
 
-## 结果
+## Result
 
-`Model.solve` 返回一个 `Result`,包含:
+`Model.solve` returns a `Result` containing:
 - `best_solution: set[int]`
 - `best_obj_value: int`
 - `num_iterations: int`
 - `runtime: float`
 - `best_found_at_time: float`
-- `stats: list[dict] | None` —— 逐迭代轨迹(默认开启)
-- `feasible_population: list[tuple[set[int], int]]` —— 最终种群
+- `stats: list[dict] | None` — per-iteration trace (on by default)
+- `feasible_population: list[tuple[set[int], int]]` — the final population
 - `feasible_population_overlap_ratios: list[list[float]]`
 
-## 批量基准测试
+## Batch benchmarking
 
-`benchmark.py` 在同一实例上用不同种子重复运行求解器多次,并汇总报告最优 / 平均
-目标值、平均找到最优的时间以及平均总运行时间。两种问题变体都支持:
+`benchmark.py` runs the solver repeatedly on the same instance with different
+seeds and reports the best / average objective, the average time to the best
+solution, and the average total runtime. Both problem variants are supported:
 
 ```bash
-# CNP:Hamilton3000a,预算 300,10 次,每次 30 秒
+# CNP: Hamilton3000a, budget 300, 10 runs of 30 seconds each
 python benchmark.py Instances/CNP/realworld/Hamilton3000a.txt \
     --budget 300 --runs 10 --max-runtime 30
 
-# DCNP:USAir97,k=20,D=2,5 次,每次 120 秒(自动应用 DCNP 调优默认)
+# DCNP: USAir97, k=20, D=2, 5 runs of 120 seconds each (DCNP tuned defaults applied)
 python benchmark.py Instances/DCNP/R1/USAir97.txt \
     --problem DCNP --budget 20 --distance 2 --runs 5 --max-runtime 120
 ```
 
-`--problem` 选择变体(`CNP` / `DCNP`);DCNP 需要 `--distance`。求解器旋钮
-(`--population-size`、`--beta`、各 `--chns-*` 等)均为可选,留空则使用问题相关的
-默认值。
+`--problem` selects the variant (`CNP` / `DCNP`); DCNP requires `--distance`.
+The solver knobs (`--population-size`, `--beta`, the `--chns-*` flags, etc.) are
+all optional and fall back to the problem-specific defaults when omitted.
 
-## 开发
+## Development
 
 ```bash
-# 安装开发依赖
+# Install development dependencies
 pip install -e ".[dev]" --no-build-isolation
 
-# 运行测试
+# Run the tests
 pytest tests/
 
-# 修改后重编译 C++
+# Recompile the C++ after changes
 python buildtools/build_extensions.py --build_type release
 ```
 
-> **macOS 提示。** 在 Apple Silicon 上重编译并拷贝原生扩展
-> (`_pypdms.*.so`)后,`import` 可能被 AMFI 以 SIGKILL(退出码 137)直接杀掉,
-> 因为拷贝后的 Mach-O 签名失效。重新做一次即席签名即可修复:
-> `codesign -f -s - pypdms/_pypdms.cpython-*-darwin.so`。
+> **macOS note.** On Apple Silicon, after recompiling and copying the native
+> extension (`_pypdms.*.so`), `import` may be killed outright by AMFI with a
+> SIGKILL (exit code 137), because the copied Mach-O's signature is invalidated.
+> Re-doing an ad-hoc signature fixes it:
+> `codesign -f -s - pypdms/_pypdms.cpython-*-darwin.so`.
 
-## 许可证
+## License
 
-MIT —— 见 [`LICENSE`](LICENSE)。
+MIT — see [`LICENSE`](LICENSE).
