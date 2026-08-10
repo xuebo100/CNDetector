@@ -3,7 +3,14 @@
 This is the single source of truth for the version: ``[project].version`` in
 pyproject.toml. meson.build calls this script so the native extension and the
 Python metadata never drift apart.
+
+meson runs this with whatever ``python3`` it finds first (often the system
+interpreter, e.g. 3.9), so it must stay compatible with older Pythons: the
+``from __future__`` import keeps the ``X | None`` annotations from being
+evaluated at definition time on 3.9.
 """
+
+from __future__ import annotations
 
 import re
 import sys

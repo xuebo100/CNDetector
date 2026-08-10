@@ -52,7 +52,12 @@ def install(build_dir: pathlib.Path):
     check_call(["meson", "install", "-C", build_dir])
 
 
-def build(build_dir: pathlib.Path, build_type: str, verbose: bool, *additional: list[str]):
+def build(
+    build_dir: pathlib.Path,
+    build_type: str,
+    verbose: bool,
+    *additional: list[str],
+):
     configure(build_dir, build_type, *additional)
     compile(build_dir, verbose)
     install(build_dir)
