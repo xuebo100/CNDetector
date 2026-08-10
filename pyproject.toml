@@ -85,6 +85,11 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = "tests"
+# CI builds the extension in place (meson install into ./pypdms) instead of
+# installing the wheel, so the repo root must be on sys.path for `import
+# pypdms` to work under a bare `pytest` invocation (which, unlike `python -m
+# pytest`, does not add the cwd).
+pythonpath = ["."]
 
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
