@@ -1,0 +1,128 @@
+[project]
+name = "pypdms"
+version = "0.1.0"
+description = "A high-performance Python solver for Critical Node Problems using Population-based Dual Memetic Search"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+keywords = [
+    "graph",
+    "optimization",
+    "critical-node-problem",
+    "memetic-search",
+    "metaheuristic",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Development Status :: 3 - Alpha",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+]
+requires-python = ">=3.9"
+authors = [
+    { name = "xuebo100", email = "x3219658574@126.com" },
+]
+maintainers = [
+    { name = "xuebo100", email = "x3219658574@126.com" },
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/xuebo100/PCMS"
+Repository = "https://github.com/xuebo100/PCMS"
+Issues = "https://github.com/xuebo100/PCMS/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[dependency-groups]
+build = [
+    "meson>=1.0.0",
+    "ninja>=1.11.1",
+    "pybind11>=2.10.0",
+]
+
+[tool.uv]
+default-groups = ["build", "dev"]
+package = true
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", "Q", "RET", "RSE", "RUF", "SIM",
+]
+# Comments and docstrings are written in Chinese; full-width punctuation
+# （）「」，。 trips the ambiguous-unicode checks, so allow them.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.isort]
+case-sensitive = true
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = [
+    "^docs/",
+    "^build/",
+    "^dist/",
+]
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
+skip = "pp3*-* *_ppc64le *_i686 *_s390x *-win32 *-musllinux*"
+build-frontend = "build"
+test-requires = ["pytest>=7.0.0"]
+test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.windows]
+before-build = "pip install delvewheel"
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
+test-command = 'python -c "import pypdms; import pypdms._pypdms"'
+
+[tool.poetry]
+exclude = [
+    "pypdms/**/*.so",
+    "pypdms/**/*.pyd",
+    "pypdms/**/*.dylib",
+    "**/__pycache__",
+    "**/*.pyc",
+]
+include = [
+    { path = "tests/", format = "sdist" },
+    { path = "meson.build", format = "sdist" },
+    { path = "buildtools/*.py", format = "sdist" },
+    { path = "pypdms/**/*.so", format = "wheel" },
+    { path = "pypdms/**/*.pyd", format = "wheel" },
+    { path = "pypdms/**/*.pyi", format = ["sdist", "wheel"] },
+    { path = "pypdms/py.typed", format = ["sdist", "wheel"] },
+]
+packages = [
+    { include = "pypdms" },
+]
+
+[tool.poetry.build]
+generate-setup-file = false
+script = "buildtools/build_wrapper.py"
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "meson", "ninja", "pybind11"]
+build-backend = "poetry.core.masonry.api"
