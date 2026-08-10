@@ -256,26 +256,6 @@ for CNP); they matter most for **DCNP** — see the DCNP section above.
 - `feasible_population: list[tuple[set[int], int]]` — the final population
 - `feasible_population_overlap_ratios: list[list[float]]`
 
-## Batch benchmarking
-
-`benchmark.py` runs the solver repeatedly on the same instance with different
-seeds and reports the best / average objective, the average time to the best
-solution, and the average total runtime. Both problem variants are supported:
-
-```bash
-# CNP: Hamilton3000a, budget 300, 10 runs of 30 seconds each
-python benchmark.py Instances/CNP/realworld/Hamilton3000a.txt \
-    --budget 300 --runs 10 --max-runtime 30
-
-# DCNP: USAir97, k=20, D=2, 5 runs of 120 seconds each (DCNP tuned defaults applied)
-python benchmark.py Instances/DCNP/R1/USAir97.txt \
-    --problem DCNP --budget 20 --distance 2 --runs 5 --max-runtime 120
-```
-
-`--problem` selects the variant (`CNP` / `DCNP`); DCNP requires `--distance`.
-The solver knobs (`--population-size`, `--beta`, the `--chns-*` flags, etc.) are
-all optional and fall back to the problem-specific defaults when omitted.
-
 ## Development
 
 ```bash
