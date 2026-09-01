@@ -12,6 +12,8 @@ from .Result import Result
 from .constants import (
     CNP,
     DCNP,
+    DEFAULT_POPULATION_SIZE,
+    DEFAULT_TRANSFER_INTERVAL,
     PACKAGE_LOGGER_NAME,
 )
 from .params import SolverParams
@@ -22,19 +24,47 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(PACKAGE_LOGGER_NAME)
 
+# DCNP-specific L2NS budget. DCNP's objective rebuilds K-hop trees on every
+# step, so a single L2NS run is far more expensive than in CNP. With the CNP
+# budget (xi = 1000, capped at 500 idle iterations) one local search takes tens
+# of seconds on 300+ node instances and the population never turns over. These
+# lighter caps keep each L2NS run cheap enough for the dual population to evolve
+# many generations within a few-minute budget. Tuned on USAir97 / Circuit /
+# Ecoli (100-500 node instances). Any field left out here keeps the CNP value.
+_DCNP_L2NS_DEFAULTS: dict[str, "int | float"] = {
+    "random_idle_product": 100,
+    "random_min_idle_steps": 20,
+    "random_max_idle_steps": 80,
+    "random_batch_max": 15,
+    "theta": 0.3,
+}
+
+# DCNP-friendly dual-population defaults. DCNP's per-L2NS cost is high, so the
+# CNP population size and exchange interval (theta = 10, beta = 20) leave the
+# population barely past initialization within a time budget, and the
+# feasible<->infeasible exchange rarely fires. A smaller population turns over
+# faster and a short exchange interval lets the two populations actually mix.
+# Applied only when the caller left these at the library defaults.
+_DCNP_POPULATION_SIZE = 4
+_DCNP_TRANSFER_INTERVAL = 5
+
 
 def _apply_l2ns_overrides(
     config: "SolverConfig",
     params: SolverParams,
+    dcnp_defaults: Optional[dict[str, "int | float"]] = None,
 ) -> None:
     """Write the L2NS local-search budget into ``config.l2ns``.
 
-    Fields left at ``None`` in ``params`` keep the native C++ defaults, which
-    implement the local-search budget of the paper.
+    Priority: ``params.l2ns_*`` (explicitly set by the user) > ``dcnp_defaults``
+    (problem-specific) > native C++ defaults, which implement the local-search
+    budget of the paper.
 
     Args:
         config: native SolverConfig whose ``l2ns`` sub-config is mutated in place
         params: solver parameters, read for its ``l2ns_*`` override fields
+        dcnp_defaults: problem-specific L2NS defaults (keys are l2ns field names,
+            without the prefix)
     """
     # l2ns field name -> the corresponding override attribute on params
     field_to_param = {
@@ -45,10 +75,13 @@ def _apply_l2ns_overrides(
         "random_min_idle_steps": "l2ns_random_min_idle_steps",
         "random_max_idle_steps": "l2ns_random_max_idle_steps",
     }
+    defaults = dcnp_defaults or {}
     for l2ns_field, param_attr in field_to_param.items():
         override = getattr(params, param_attr, None)
         if override is not None:
             setattr(config.l2ns, l2ns_field, override)
+        elif l2ns_field in defaults:
+            setattr(config.l2ns, l2ns_field, defaults[l2ns_field])
 
 
 def _normalize_feasible_population(
@@ -428,21 +461,36 @@ class Model:
             budget, distance, seed
         )
 
-        # CNP and DCNP share one parameter set: the solver applies the same
-        # tuned defaults to both variants, so no problem-specific substitution
-        # takes place here.
+        # A single L2NS run is expensive for DCNP; the CNP population size and
+        # exchange interval leave the population barely past initialization
+        # within a time budget and the exchange rarely fires. If the caller left
+        # these at the library defaults, replace them with a small population
+        # and a short exchange interval better suited to DCNP.
+        dcnp_population_size = (
+            _DCNP_POPULATION_SIZE
+            if params.population_size == DEFAULT_POPULATION_SIZE
+            else params.population_size
+        )
+        dcnp_transfer_interval = (
+            _DCNP_TRANSFER_INTERVAL
+            if params.transfer_interval == DEFAULT_TRANSFER_INTERVAL
+            else params.transfer_interval
+        )
+
+        # Configure the solver (same as the CNP path).
         config = SolverConfig()
-        config.population_size = params.population_size
+        config.population_size = dcnp_population_size
         config.thread_count = params.thread_count
         config.stagnation_threshold = params.stagnation_threshold
-        config.transfer_interval = params.transfer_interval
+        config.transfer_interval = dcnp_transfer_interval
         config.seed = seed
         config.partial_ratio = params.partial_ratio
         config.beta = params.beta
         config.display_interval = effective_display_interval
         config.search = params.search
 
-        _apply_l2ns_overrides(config, params)
+        # Lighter L2NS budget for DCNP; explicit params.l2ns_* still override it.
+        _apply_l2ns_overrides(config, params, dcnp_defaults=_DCNP_L2NS_DEFAULTS)
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
         if isinstance(max_runtime, (int, float)) and max_runtime > 0:

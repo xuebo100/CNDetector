@@ -97,10 +97,10 @@ print(f"Best D-hop pairs: {result.best_obj_value}")
 print(f"Removed nodes:    {sorted(result.best_solution)}")
 ```
 
-DCNP runs the same dual-population search as CNP and uses the same parameter
-set. Its objective rebuilds a K-hop tree on every step, so a single local search
-is far more expensive; budget the run accordingly, or lower the local-search
-budget through the `l2ns_*` fields of `SolverParams`.
+DCNP runs the same dual-population search as CNP. Its objective rebuilds a
+K-hop tree on every step, so a single local search is far more expensive, and
+PyPDMS therefore applies a lighter parameter set automatically — see
+[Tuning DCNP](#tuning-dcnp).
 
 ## API reference
 
@@ -164,6 +164,26 @@ thread count. `set_max_threads` / `get_max_threads` expose the cap directly.
 `Model.solve` returns a `Result` with `best_solution`, `best_obj_value`,
 `num_iterations`, `runtime`, `best_found_at_time`, an optional per-iteration
 `stats` list, and the final `feasible_population`.
+
+## Tuning DCNP
+
+Evaluating the DCNP objective rebuilds the b-hop trees on every step, which
+makes one local search one to two orders of magnitude more expensive than for
+CNP. DCNP therefore uses a lighter parameter set, applied automatically **only
+when you leave these knobs at the library defaults**:
+
+| Knob | CNP default | DCNP default |
+|------|-------------|--------------|
+| `population_size` (theta) | 10 | **4** |
+| `transfer_interval` (beta) | 20 | **5** |
+| `l2ns_random_idle_product` (xi) | 1000 | **100** |
+| `l2ns_random_min_idle_steps` | 1 | **20** |
+| `l2ns_random_max_idle_steps` | 500 | **80** |
+| `l2ns_random_batch_max` | 50 | **15** |
+| `l2ns_theta` | 0.3 | **0.3** |
+
+Passing an explicit value (or any `l2ns_*` field) overrides it. These values
+were tuned on the 100–500 node instances USAir97, Circuit and Ecoli.
 
 ## Development
 
