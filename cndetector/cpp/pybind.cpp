@@ -35,10 +35,10 @@ Solution pysetToSolution(const py::set &py_set)
     return sol;
 }
 
-PYBIND11_MODULE(_pypdms, m)
+PYBIND11_MODULE(_cndetector, m)
 {
     m.doc() = R"doc(
-        PyPDMS - Python bindings for Population-based Dual Memetic Search
+        CNDetector - Python bindings for Population-based Dual Memetic Search
         for Critical Node Problems.
     )doc";
 

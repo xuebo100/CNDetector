@@ -25,7 +25,7 @@ class ProgressPrinter:
     def start(self, budget: int, seed: int) -> None:
         if not self._should_print:
             return
-        self._logger.info("PyPDMS IRMS Solver")
+        self._logger.info("CNDetector IRMS Solver")
         self._logger.info("  Budget: %d", budget)
         self._logger.info("  Seed:   %d", seed)
 

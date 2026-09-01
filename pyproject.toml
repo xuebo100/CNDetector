@@ -1,5 +1,5 @@
 [project]
-name = "pypdms"
+name = "cndetector"
 version = "0.2.0"
 description = "A high-performance Python solver for Critical Node Problems using Population-based Dual Memetic Search"
 license = "MIT"
@@ -82,9 +82,9 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = "tests"
-# CI builds the extension in place (meson install into ./pypdms) instead of
+# CI builds the extension in place (meson install into ./cndetector) instead of
 # installing the wheel, so the repo root must be on sys.path for `import
-# pypdms` to work under a bare `pytest` invocation (which, unlike `python -m
+# cndetector` to work under a bare `pytest` invocation (which, unlike `python -m
 # pytest`, does not add the cwd).
 pythonpath = ["."]
 
@@ -98,13 +98,13 @@ test-command = "pytest {project}/tests"
 [tool.cibuildwheel.windows]
 before-build = "pip install delvewheel"
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
-test-command = 'python -c "import pypdms; import pypdms._pypdms"'
+test-command = 'python -c "import cndetector; import cndetector._cndetector"'
 
 [tool.poetry]
 exclude = [
-    "pypdms/**/*.so",
-    "pypdms/**/*.pyd",
-    "pypdms/**/*.dylib",
+    "cndetector/**/*.so",
+    "cndetector/**/*.pyd",
+    "cndetector/**/*.dylib",
     "**/__pycache__",
     "**/*.pyc",
 ]
@@ -112,13 +112,13 @@ include = [
     { path = "tests/", format = "sdist" },
     { path = "meson.build", format = "sdist" },
     { path = "buildtools/*.py", format = "sdist" },
-    { path = "pypdms/**/*.so", format = "wheel" },
-    { path = "pypdms/**/*.pyd", format = "wheel" },
-    { path = "pypdms/**/*.pyi", format = ["sdist", "wheel"] },
-    { path = "pypdms/py.typed", format = ["sdist", "wheel"] },
+    { path = "cndetector/**/*.so", format = "wheel" },
+    { path = "cndetector/**/*.pyd", format = "wheel" },
+    { path = "cndetector/**/*.pyi", format = ["sdist", "wheel"] },
+    { path = "cndetector/py.typed", format = ["sdist", "wheel"] },
 ]
 packages = [
-    { include = "pypdms" },
+    { include = "cndetector" },
 ]
 
 [tool.poetry.build]

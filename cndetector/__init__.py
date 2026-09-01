@@ -6,7 +6,7 @@ from importlib import metadata
 
 from .Model import Model
 from .Result import Result
-from ._pypdms import get_max_threads, set_max_threads
+from ._cndetector import get_max_threads, set_max_threads
 from .constants import (
     CNP,
     DCNP,
@@ -33,7 +33,7 @@ _logger.setLevel(logging.INFO)
 _logger.propagate = False
 
 try:
-    __version__ = metadata.version("pypdms")
+    __version__ = metadata.version("cndetector")
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 

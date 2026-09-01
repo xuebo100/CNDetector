@@ -13,7 +13,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         build_dir = pathlib.Path(tmpdir)
-        install_dir = cwd / "pypdms"
+        install_dir = cwd / "cndetector"
 
         clean(build_dir, install_dir)
         build(build_dir, build_type="release", verbose=False)

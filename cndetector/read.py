@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from ._pypdms import ProblemData
+from ._cndetector import ProblemData
 
 
 def read(graph_file: str) -> ProblemData:

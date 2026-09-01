@@ -1,4 +1,4 @@
-"""Type stubs for the native pypdms._pypdms extension module."""
+"""Type stubs for the native cndetector._cndetector extension module."""
 
 from __future__ import annotations
 

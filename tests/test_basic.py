@@ -1,16 +1,16 @@
-"""Tests for the PyPDMS Python API."""
+"""Tests for the CNDetector Python API."""
 
 import pytest
 
-import pypdms
-from pypdms import (
+import cndetector
+from cndetector import (
     MaxIterations,
     MaxRuntime,
     Model,
     NoImprovement,
     SolverParams,
 )
-from pypdms._pypdms import ProblemData
+from cndetector._cndetector import ProblemData
 
 
 def _cycle_with_chords_model() -> Model:
@@ -26,7 +26,7 @@ def _cycle_with_chords_model() -> Model:
 
 
 def test_version():
-    assert pypdms.__version__ is not None
+    assert cndetector.__version__ is not None
 
 
 def test_model_add_nodes_and_edges():
@@ -343,9 +343,9 @@ def test_read_dimacs_edge_format(tmp_path):
         "c tiny graph\np edge 3 2\ne 0 1\ne 1 2\n",
         encoding="utf-8",
     )
-    data = pypdms.read_dimacs_edge_format(str(graph_file))
+    data = cndetector.read_dimacs_edge_format(str(graph_file))
     assert data.num_nodes() == 3
     assert data.get_adj_list()[1] == {0, 2}
-    auto_data = pypdms.read(str(graph_file))
+    auto_data = cndetector.read(str(graph_file))
     assert auto_data.num_nodes() == 3
     assert auto_data.get_adj_list()[1] == {0, 2}

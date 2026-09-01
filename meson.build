@@ -1,5 +1,5 @@
 project(
-    'pypdms',
+    'cndetector',
     'cpp',
     version: run_command(
         find_program('python3', 'python', required: true),
@@ -35,7 +35,7 @@ if host_machine.system() != 'windows'
     add_project_arguments('-Werror', language: 'cpp')
 endif
 
-SRC_DIR = 'pypdms' / 'cpp'
+SRC_DIR = 'cndetector' / 'cpp'
 INCLUDES = include_directories(SRC_DIR)
 
 # ParallelFor.h spawns std::thread workers, so every target that pulls it in
@@ -86,11 +86,11 @@ py = import('python').find_installation()
 dependencies = [py.dependency(), dependency('pybind11'), threads_dep]
 
 py.extension_module(
-    '_pypdms',
+    '_cndetector',
     [SRC_DIR / 'pybind.cpp'],
     dependencies: dependencies,
     link_with: [libcore, libgraph, libsearch, libcrossover],
     install: true,
-    subdir: 'pypdms',
+    subdir: 'cndetector',
     include_directories: INCLUDES,
 )

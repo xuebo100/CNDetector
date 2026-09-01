@@ -1,17 +1,17 @@
 <div align="center">
 
-# PyPDMS
+# CNDetector
 
 **A high-performance solver for Critical Node Problems, with a C++ core and a clean Python API.**
 
-[![PyPI](https://img.shields.io/pypi/v/pypdms.svg)](https://pypi.org/project/pypdms/)
-[![Python](https://img.shields.io/pypi/pyversions/pypdms.svg)](https://pypi.org/project/pypdms/)
-[![CI](https://github.com/xuebo100/PCMS/actions/workflows/ci.yml/badge.svg)](https://github.com/xuebo100/PCMS/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/cndetector.svg)](https://pypi.org/project/cndetector/)
+[![Python](https://img.shields.io/pypi/pyversions/cndetector.svg)](https://pypi.org/project/cndetector/)
+[![CI](https://github.com/xuebo100/CNDetector/actions/workflows/ci.yml/badge.svg)](https://github.com/xuebo100/CNDetector/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 
-PyPDMS finds the set of vertices whose removal most fragments a graph, using
+CNDetector finds the set of vertices whose removal most fragments a graph, using
 **IRMS** (*Iterative Ruin and Memetic Search*) — a population-based memetic
 metaheuristic implemented in C++ and exposed through pybind11.
 
@@ -24,13 +24,13 @@ that stay within `D` hops of each other.
 ## Installation
 
 ```bash
-pip install pypdms
+pip install cndetector
 ```
 
 <details>
 <summary>Build from source</summary>
 
-PyPDMS builds from source with Meson + Ninja + pybind11:
+CNDetector builds from source with Meson + Ninja + pybind11:
 
 ```bash
 pip install -e . --no-build-isolation
@@ -44,7 +44,7 @@ or MSVC 2022). `meson`, `ninja` and `pybind11` are pulled in automatically.
 ## Quick start — CNP
 
 ```python
-from pypdms import Model, MaxIterations
+from cndetector import Model, MaxIterations
 
 model = Model()
 for u, v in [
@@ -67,12 +67,12 @@ print(f"Removed nodes:  {sorted(result.best_solution)}")
 Load a graph from a file instead of building it by hand:
 
 ```python
-import pypdms
+import cndetector
 
-model = pypdms.Model.from_data(pypdms.read("path/to/graph.adj"))
+model = cndetector.Model.from_data(cndetector.read("path/to/graph.adj"))
 ```
 
-`pypdms.read()` handles adjacency-list files and auto-detects DIMACS edge-list
+`cndetector.read()` handles adjacency-list files and auto-detects DIMACS edge-list
 files (a `p edge n m` line followed by `e u v` lines).
 
 ## Distance-based CNP (DCNP)
@@ -80,10 +80,10 @@ files (a `p edge n m` line followed by `e u v` lines).
 Select DCNP with `problem="DCNP"` and a `distance`:
 
 ```python
-import pypdms
-from pypdms import MaxRuntime
+import cndetector
+from cndetector import MaxRuntime
 
-model = pypdms.Model.from_data(pypdms.read("Instances/DCNP/R1/karate.txt"))
+model = cndetector.Model.from_data(cndetector.read("Instances/DCNP/R1/karate.txt"))
 
 result = model.solve(
     problem="DCNP",
@@ -99,7 +99,7 @@ print(f"Removed nodes:    {sorted(result.best_solution)}")
 
 DCNP runs the same dual-population search as CNP. Its objective rebuilds a
 K-hop tree on every step, so a single local search is far more expensive, and
-PyPDMS therefore applies a lighter parameter set automatically — see
+CNDetector therefore applies a lighter parameter set automatically — see
 [Tuning DCNP](#tuning-dcnp).
 
 ## API reference
@@ -130,7 +130,7 @@ Any `Callable[[float], bool]` works, so you can supply your own.
 ### `SolverParams`
 
 ```python
-from pypdms import SolverParams
+from cndetector import SolverParams
 
 params = SolverParams(
     population_size=10,       # theta: size of each population
@@ -194,10 +194,10 @@ python buildtools/build_extensions.py --build_type release   # recompile C++
 ```
 
 > **macOS note.** On Apple Silicon, after recompiling and copying the native
-> extension (`_pypdms.*.so`), `import` may be killed by AMFI with SIGKILL (exit
+> extension (`_cndetector.*.so`), `import` may be killed by AMFI with SIGKILL (exit
 > code 137) because the copied Mach-O's signature is invalidated. Re-sign it
 > ad-hoc to fix it:
-> `codesign -f -s - pypdms/_pypdms.cpython-*-darwin.so`.
+> `codesign -f -s - cndetector/_cndetector.cpython-*-darwin.so`.
 
 ## License
 

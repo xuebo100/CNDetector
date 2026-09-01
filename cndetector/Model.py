@@ -19,7 +19,7 @@ from .constants import (
 from .params import SolverParams
 
 if TYPE_CHECKING:
-    from ._pypdms import ProblemData, SolverConfig
+    from ._cndetector import ProblemData, SolverConfig
     from .stop import StoppingCriterion
 
 logger = logging.getLogger(PACKAGE_LOGGER_NAME)
@@ -220,7 +220,7 @@ class Model:
         Returns:
             The created ProblemData object.
         """
-        from ._pypdms import ProblemData
+        from ._cndetector import ProblemData
 
         # Determine the largest node ID.
         max_node_id = max(self.nodes) if self.nodes else 0
@@ -403,7 +403,7 @@ class Model:
         Returns:
             The solve result.
         """
-        from ._pypdms import SolverConfig
+        from ._cndetector import SolverConfig
 
         # Create the original graph.
         original_graph = self.problem_data.create_original_graph(
@@ -454,7 +454,7 @@ class Model:
         ``transfer_interval`` generations the best infeasible solution is
         completed to the full budget and injected into the feasible population.
         """
-        from ._pypdms import SolverConfig
+        from ._cndetector import SolverConfig
 
         # Create the original DCNP graph.
         original_graph = self.problem_data.create_original_dcnp_graph(
@@ -529,7 +529,7 @@ class Model:
         Returns:
             The solve result.
         """
-        from ._pypdms import DCNPDualPopulation, DualPopulation, set_max_threads
+        from ._cndetector import DCNPDualPopulation, DualPopulation, set_max_threads
 
         population_cls = DCNPDualPopulation if dcnp else DualPopulation
 

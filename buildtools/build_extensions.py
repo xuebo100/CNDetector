@@ -1,4 +1,4 @@
-"""Builds the native extensions for PyPDMS."""
+"""Builds the native extensions for CNDetector."""
 
 import argparse
 import pathlib
@@ -69,7 +69,7 @@ def main():
     build_dir = cwd / args.build_dir
 
     if args.clean:
-        install_dir = cwd / "pypdms"
+        install_dir = cwd / "cndetector"
         clean(build_dir, install_dir)
 
     build(build_dir, args.build_type, args.verbose, *args.additional)
