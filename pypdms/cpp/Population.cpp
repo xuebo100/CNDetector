@@ -1,5 +1,6 @@
 #include "Population.h"
 
+#include "ParallelFor.h"
 #include "search/LocalSearch.h"
 
 #include <algorithm>
@@ -32,7 +33,7 @@ DualPopulationT<GraphT>::DualPopulationT(
       config_(std::move(config)),
       startTime_(startTime)
 {
-    config_.resolvedChns = resolveCHNSConfig(config_);
+    config_.resolvedL2ns = resolveL2NSConfig(config_);
     deadline_ = config_.maxRuntime > 0.0
                     ? startTime_
                           + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -60,26 +61,52 @@ std::pair<Solution, int> DualPopulationT<GraphT>::initialize()
     iterationEvents_.clear();
     exchangeEvents_.clear();
 
+    // Population members are independent local-search runs with fixed
+    // per-member seeds, so they are generated in parallel and appended in a
+    // fixed order afterwards. The first (feasible) member always runs so the
+    // population is never empty; later members are skipped once the time
+    // budget is exhausted, mirroring the sequential early-break.
+    struct InitJob
+    {
+        int budget;
+        int seed;
+    };
+    std::vector<InitJob> jobs;
+    jobs.reserve(static_cast<size_t>(config_.populationSize) * 2);
     for (int i = 0; i < config_.populationSize; ++i)
     {
-        // Always build the first member (each individual CHNS run is itself
-        // bounded by the deadline), so the population is never empty. For the
-        // rest, stop as soon as the time budget is exhausted instead of
-        // running initialization to completion past the limit.
-        if (i > 0 && reachedDeadline())
+        jobs.push_back({feasibleBudget_,
+                        deterministicSeed(config_.seed, 0x1001u, 0,
+                                          static_cast<uint64_t>(i))});
+        jobs.push_back({infeasibleBudget_,
+                        deterministicSeed(config_.seed, 0x1002u, 0,
+                                          static_cast<uint64_t>(i))});
+    }
+
+    std::vector<std::optional<std::pair<Solution, int>>> results(jobs.size());
+    pdms::parallelFor(0, static_cast<int>(jobs.size()),
+                      [&](int k, int /*workerIdx*/)
+                      {
+                          // Both member-0 solutions always run (matching the
+                          // sequential per-member deadline check), so neither
+                          // population is ever left empty.
+                          if (k > 1 && reachedDeadline())
+                          {
+                              return;
+                          }
+                          results[k] = generateRandomSolution(jobs[k].budget,
+                                                              jobs[k].seed);
+                      });
+
+    for (size_t k = 0; k < jobs.size(); ++k)
+    {
+        if (!results[k].has_value())
         {
-            break;
+            continue;
         }
-
-        const int feasibleSeed
-            = deterministicSeed(config_.seed, 0x1001u, 0, static_cast<uint64_t>(i));
-        auto [fSolution, fObjValue] = generateRandomSolution(feasibleBudget_, feasibleSeed);
-        addSolution(feasiblePopulation_, fSolution, fObjValue);
-
-        const int infeasibleSeed
-            = deterministicSeed(config_.seed, 0x1002u, 0, static_cast<uint64_t>(i));
-        auto [iSolution, iObjValue] = generateRandomSolution(infeasibleBudget_, infeasibleSeed);
-        addSolution(infeasiblePopulation_, iSolution, iObjValue);
+        auto &population
+            = k % 2 == 0 ? feasiblePopulation_ : infeasiblePopulation_;
+        addSolution(population, results[k]->first, results[k]->second);
     }
 
     const auto &bestItem = getBestItem(feasiblePopulation_);
@@ -92,11 +119,47 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
     const int feasibleIteration = feasibleIterationCount_ + 1;
     const int infeasibleIteration = infeasibleIterationCount_ + 1;
 
-    runPopulationIteration(PopulationKind::Feasible, feasibleIteration, feasibleSelectionRng_);
-    runPopulationIteration(PopulationKind::Infeasible, infeasibleIteration, infeasibleSelectionRng_);
+    // Collect the generation's offspring jobs for both populations (parent
+    // selection stays sequential so the RNG streams match the serial order),
+    // run the heavy createOffspring calls in parallel, then apply the results
+    // in job order.
+    std::vector<OffspringJob> jobs;
+    jobs.reserve(static_cast<size_t>(config_.threadCount) * 2);
+    collectOffspringJobs(
+        PopulationKind::Feasible, feasibleIteration, feasibleSelectionRng_, jobs);
+    collectOffspringJobs(
+        PopulationKind::Infeasible, infeasibleIteration, infeasibleSelectionRng_, jobs);
+
+    std::vector<std::pair<Solution, int>> results(jobs.size());
+    pdms::parallelFor(0, static_cast<int>(jobs.size()),
+                      [&](int k, int /*workerIdx*/)
+                      {
+                          results[k] = createOffspring(
+                              jobs[k].parents, jobs[k].targetBudget, jobs[k].seed);
+                      });
+
+    // PMS (Algorithm 2, lines 8-9): the offspring of a generation form a
+    // temporary population P', from which only the single best solution
+    // S* = argmin f(S_i) is passed to the population update. Ties keep the
+    // earliest job so the outcome stays independent of the thread schedule.
+    applyBestOffspring(feasiblePopulation_, PopulationKind::Feasible, jobs, results);
+    applyBestOffspring(infeasiblePopulation_, PopulationKind::Infeasible, jobs, results);
 
     feasibleIterationCount_ = feasibleIteration;
     infeasibleIterationCount_ = infeasibleIteration;
+
+    // Algorithm 1, lines 10-15: track I'_g, the number of consecutive
+    // generations in which the incumbent did not improve.
+    const int generationBest = getBestItem(feasiblePopulation_).objValue;
+    if (generationBest < bestObjective_)
+    {
+        bestObjective_ = generationBest;
+        idleGenerations_ = 0;
+    }
+    else
+    {
+        ++idleGenerations_;
+    }
 
     if (feasibleIteration % config_.transferInterval == 0 && !reachedDeadline())
     {
@@ -108,8 +171,38 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
 }
 
 template <typename GraphT>
-void DualPopulationT<GraphT>::runPopulationIteration(
-    PopulationKind kind, int iteration, RandomNumberGenerator &rng)
+void DualPopulationT<GraphT>::applyBestOffspring(
+    PopulationItems &population,
+    PopulationKind kind,
+    const std::vector<OffspringJob> &jobs,
+    const std::vector<std::pair<Solution, int>> &results)
+{
+    const std::pair<Solution, int> *best = nullptr;
+    for (size_t k = 0; k < jobs.size(); ++k)
+    {
+        if (jobs[k].kind != kind)
+        {
+            continue;
+        }
+        if (best == nullptr || results[k].second < best->second)
+        {
+            best = &results[k];
+        }
+    }
+
+    if (best != nullptr)
+    {
+        updatePopulation(population, best->first, best->second,
+                         static_cast<size_t>(config_.populationSize));
+    }
+}
+
+template <typename GraphT>
+void DualPopulationT<GraphT>::collectOffspringJobs(
+    PopulationKind kind,
+    int iteration,
+    RandomNumberGenerator &rng,
+    std::vector<OffspringJob> &jobs)
 {
     PopulationItems &population
         = kind == PopulationKind::Feasible ? feasiblePopulation_ : infeasiblePopulation_;
@@ -117,21 +210,19 @@ void DualPopulationT<GraphT>::runPopulationIteration(
         = kind == PopulationKind::Feasible ? std::nullopt
                                            : std::optional<int>(infeasibleBudget_);
 
-    for (int i = 0; i < config_.offspringCount; ++i)
+    for (int i = 0; i < config_.threadCount; ++i)
     {
         if (reachedDeadline())
         {
             break;
         }
-        const auto parents = selectRandomParents(population, rng);
         const uint64_t streamId = kind == PopulationKind::Feasible ? 0x2001u : 0x2002u;
         const int offspringSeed = deterministicSeed(
             config_.seed, streamId,
             static_cast<uint64_t>(iteration), static_cast<uint64_t>(i));
 
-        auto [solution, objValue] = createOffspring(parents, targetBudget, offspringSeed);
-        updatePopulation(population, solution, objValue,
-                         static_cast<size_t>(config_.populationSize));
+        jobs.push_back({kind, selectRandomParents(population, rng),
+                        targetBudget, offspringSeed});
     }
 }
 
@@ -153,7 +244,52 @@ ExchangeReport DualPopulationT<GraphT>::performExchange(int iteration)
                      static_cast<size_t>(config_.populationSize));
     report.firstPopulationImprovedBest
         = getBestItem(feasiblePopulation_).objValue < bestBefore;
+
+    // Algorithm 4, lines 8-11: once the search has stagnated for more than
+    // delta generations, rebuild the auxiliary population and reset I'_g.
+    if (idleGenerations_ > config_.stagnationThreshold)
+    {
+        reconstructAuxiliaryPopulation(iteration);
+        idleGenerations_ = 0;
+    }
     return report;
+}
+
+template <typename GraphT>
+void DualPopulationT<GraphT>::reconstructAuxiliaryPopulation(int iteration)
+{
+    // Section 4.4: keep the incumbent of P_a and replace the remaining
+    // theta - 1 individuals with fresh solutions built by the PPI procedure.
+    const PopulationItem &incumbent = getBestItem(infeasiblePopulation_);
+    const Solution keptSolution = *incumbent.solution;
+    const int keptObjValue = incumbent.objValue;
+
+    const int replacements = std::max(0, config_.populationSize - 1);
+    std::vector<std::optional<std::pair<Solution, int>>> results(
+        static_cast<size_t>(replacements));
+    pdms::parallelFor(0, replacements,
+                      [&](int k, int /*workerIdx*/)
+                      {
+                          if (reachedDeadline())
+                          {
+                              return;
+                          }
+                          results[static_cast<size_t>(k)] = generateRandomSolution(
+                              infeasibleBudget_,
+                              deterministicSeed(config_.seed, 0x4001u,
+                                                static_cast<uint64_t>(iteration),
+                                                static_cast<uint64_t>(k)));
+                      });
+
+    infeasiblePopulation_.clear();
+    addSolution(infeasiblePopulation_, keptSolution, keptObjValue);
+    for (const auto &result : results)
+    {
+        if (result.has_value())
+        {
+            addSolution(infeasiblePopulation_, result->first, result->second);
+        }
+    }
 }
 
 template <typename GraphT>
@@ -188,7 +324,7 @@ std::pair<Solution, int> DualPopulationT<GraphT>::generateRandomSolution(int bud
         graph = originalGraph_.getRandomPartialGraph(budget, deterministicSeed(seed, 0x4002u));
     }
     const LocalSearchResult result
-        = runLocalSearch(*graph, deterministicSeed(seed, 0x4003u), config_.resolvedChns, deadline_);
+        = runLocalSearch(*graph, deterministicSeed(seed, 0x4003u), config_.resolvedL2ns, deadline_);
     return {result.solution, result.objValue};
 }
 
@@ -203,7 +339,7 @@ std::pair<Solution, int> DualPopulationT<GraphT>::createOffspring(
     auto offspringGraph = reduceSolveCombine(
         originalGraph_, parentPtrs, config_.beta, targetBudget, seed, config_, deadline_);
     const LocalSearchResult result
-        = runLocalSearch(*offspringGraph, seed + 10000, config_.resolvedChns, deadline_);
+        = runLocalSearch(*offspringGraph, seed + 10000, config_.resolvedL2ns, deadline_);
     return {result.solution, result.objValue};
 }
 
@@ -236,14 +372,14 @@ std::pair<Solution, int> DualPopulationT<GraphT>::completeSolutionToTargetBudget
     }
 
     LocalSearchResult result
-        = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x6003u), config_.resolvedChns, deadline_);
+        = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x6003u), config_.resolvedL2ns, deadline_);
     Solution finalNodes = baseSolution;
     finalNodes.reserve(baseSolution.size() + result.solution.size());
     finalNodes.insert(result.solution.begin(), result.solution.end());
 
     auto improvedGraph = originalGraph_.clone();
     improvedGraph->updateGraphByRemovedNodes(finalNodes);
-    result = runLocalSearch(*improvedGraph, deterministicSeed(seed, 0x6004u), config_.resolvedChns, deadline_);
+    result = runLocalSearch(*improvedGraph, deterministicSeed(seed, 0x6004u), config_.resolvedL2ns, deadline_);
     return {result.solution, result.objValue};
 }
 

@@ -75,9 +75,32 @@ private:
         = std::pair<std::shared_ptr<const Solution>, std::shared_ptr<const Solution>>;
     enum class PopulationKind { Feasible, Infeasible };
 
-    void runPopulationIteration(
-        PopulationKind kind, int iteration, RandomNumberGenerator &rng);
+    /**
+     * One offspring to create during a generation. Parents are selected
+     * sequentially up front (fixed RNG order), the heavy createOffspring
+     * calls then run in parallel, and results are applied to the populations
+     * in job order — so results are deterministic for any thread count.
+     */
+    struct OffspringJob
+    {
+        PopulationKind kind;
+        ParentHandles parents;
+        std::optional<int> targetBudget;
+        int seed;
+    };
+
+    void collectOffspringJobs(PopulationKind kind,
+                              int iteration,
+                              RandomNumberGenerator &rng,
+                              std::vector<OffspringJob> &jobs);
+    void applyBestOffspring(PopulationItems &population,
+                            PopulationKind kind,
+                            const std::vector<OffspringJob> &jobs,
+                            const std::vector<std::pair<Solution, int>> &results);
     ExchangeReport performExchange(int iteration);
+    // Algorithm 4, line 9: regenerate the auxiliary population, keeping only
+    // its incumbent.
+    void reconstructAuxiliaryPopulation(int iteration);
     IterationEvent buildFeasibleIterationEvent(int iteration) const;
     double elapsedSeconds() const;
     bool reachedDeadline() const;
@@ -113,6 +136,9 @@ private:
     PopulationItems infeasiblePopulation_;
     std::vector<IterationEvent> iterationEvents_;
     std::vector<ExchangeEvent> exchangeEvents_;
+    // I'_g of Algorithm 1: generations since the incumbent last improved.
+    int idleGenerations_ = 0;
+    int bestObjective_ = std::numeric_limits<int>::max();
     RandomNumberGenerator feasibleSelectionRng_;
     RandomNumberGenerator infeasibleSelectionRng_;
     size_t nextItemId_ = 0;
@@ -120,7 +146,7 @@ private:
     int infeasibleIterationCount_ = 0;
     std::chrono::steady_clock::time_point startTime_;
     // Hard wall-clock deadline (startTime_ + config.maxRuntime). When the
-    // budget is unlimited this is time_point::max(). All CHNS calls are
+    // budget is unlimited this is time_point::max(). All L2NS calls are
     // bounded by it, and population initialization / generation steps bail
     // out as soon as it passes.
     std::chrono::steady_clock::time_point deadline_;

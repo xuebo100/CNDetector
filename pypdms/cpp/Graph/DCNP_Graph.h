@@ -73,28 +73,71 @@ private:
 
     mutable RandomNumberGenerator rng_;
 
-    // BFS scratch. visitEpoch_/currentEpoch_ implement O(1) logical clears of
-    // the visited set (no O(n) fill per BFS).
-    mutable std::vector<uint32_t> visitEpoch_;
-    mutable uint32_t currentEpoch_ = 0;
-    mutable std::vector<int> bfsLevel_;
-    mutable std::vector<Node> bfsQueue_;
+    /**
+     * Per-worker BFS scratch. visitEpoch/currentEpoch implement O(1) logical
+     * clears of the visited set (no O(n) fill per BFS). Each parallelFor
+     * worker owns one slot, so concurrent evaluation BFS runs never share
+     * mutable state.
+     */
+    struct BfsScratch
+    {
+        std::vector<uint32_t> visitEpoch;
+        uint32_t currentEpoch = 0;
+        std::vector<int> level;
+        std::vector<Node> queue;
+        std::vector<Node> members;  ///< Harvested tree members (eval paths).
+
+        // Size the buffers for an n-node graph (no-op when already sized).
+        void ensure(int n);
+        // Bump and return the epoch, resetting visitEpoch on wraparound.
+        uint32_t nextEpoch();
+    };
+
+    /**
+     * Lazily grown pool of BfsScratch slots, one per parallelFor worker.
+     * Scratch contents are throwaway, so copies of the graph deliberately
+     * start with an empty pool instead of duplicating the buffers.
+     */
+    struct BfsScratchPool
+    {
+        std::vector<BfsScratch> workers;
+
+        BfsScratchPool() = default;
+        BfsScratchPool(const BfsScratchPool & /*other*/) {}
+        BfsScratchPool &operator=(const BfsScratchPool & /*other*/)
+        {
+            return *this;
+        }
+        BfsScratchPool(BfsScratchPool &&) = default;
+        BfsScratchPool &operator=(BfsScratchPool &&) = default;
+    };
+
+    mutable BfsScratchPool bfsScratch_;
     mutable std::vector<Node> affectedScratch_;
-    mutable std::vector<Node> evalMembersScratch_;
 
-    // Bump and return the epoch, resetting visitEpoch_ on wraparound.
-    uint32_t nextEpoch() const;
+    // Make sure the pool holds at least `workerCount` slots (buffers inside
+    // each slot are sized lazily by the worker that uses it).
+    std::vector<BfsScratch> &ensureScratch(int workerCount) const;
 
-    // Recompute v's K-hop tree (members, size, running total) with BFS.
+    // Recompute v's K-hop tree (members + size) into treeMembers_/treeSize_
+    // without touching totalTreeSize_.
+    void computeTree(Node v, BfsScratch &scratch);
+
+    // Recompute v's tree via computeTree and keep totalTreeSize_ in sync.
     void bfsKTree(Node v);
 
     /**
-     * Evaluation-only BFS: returns the number of active nodes (excluding v)
-     * within kHops_ of v under the current removedFlag_, without touching
-     * treeMembers_/treeSize_/totalTreeSize_. The visited nodes are left in
-     * bfsQueue_[0 .. ret] with v at index 0, so callers may harvest them.
+     * Evaluation-only BFS: returns the number of nodes (excluding v) within
+     * kHops_ of v, without touching treeMembers_/treeSize_/totalTreeSize_.
+     * `forcedRemoved` is treated as removed and `forcedPresent` as active
+     * regardless of removedFlag_, so callers can score hypothetical moves
+     * without mutating shared state (which keeps this thread-safe). The
+     * visited nodes are left in scratch.queue[0 .. ret] with v at index 0.
      */
-    int bfsTreeSizeOnly(Node v) const;
+    int bfsCountFrom(Node v,
+                     Node forcedRemoved,
+                     Node forcedPresent,
+                     BfsScratch &scratch) const;
 
 public:
     DCNP_Graph(NodeSet nodes,

@@ -1,5 +1,6 @@
 
 #include "DCNP_Graph.h"
+#include "../ParallelFor.h"
 #include <algorithm>
 #include <limits>
 
@@ -21,12 +22,40 @@ DCNP_Graph::DCNP_Graph(NodeSet nodes,
     treeSize_.assign(static_cast<size_t>(numNodes_), 0);
     totalTreeSize_ = 0;
 
-    visitEpoch_.assign(static_cast<size_t>(numNodes_), 0);
-    bfsLevel_.assign(static_cast<size_t>(numNodes_), 0);
-    bfsQueue_.resize(static_cast<size_t>(numNodes_));
-
     rebuildCSR();
     buildTree();
+}
+
+void DCNP_Graph::BfsScratch::ensure(int n)
+{
+    if (visitEpoch.size() < static_cast<size_t>(n))
+    {
+        visitEpoch.assign(static_cast<size_t>(n), 0);
+        currentEpoch = 0;
+        level.resize(static_cast<size_t>(n));
+        queue.resize(static_cast<size_t>(n));
+    }
+}
+
+uint32_t DCNP_Graph::BfsScratch::nextEpoch()
+{
+    if (++currentEpoch == 0)
+    {
+        std::fill(visitEpoch.begin(), visitEpoch.end(), 0u);
+        currentEpoch = 1;
+    }
+    return currentEpoch;
+}
+
+std::vector<DCNP_Graph::BfsScratch> &DCNP_Graph::ensureScratch(
+    int workerCount) const
+{
+    auto &workers = bfsScratch_.workers;
+    if (workers.size() < static_cast<size_t>(workerCount))
+    {
+        workers.resize(static_cast<size_t>(workerCount));
+    }
+    return workers;
 }
 
 void DCNP_Graph::rebuildCSR()
@@ -56,19 +85,8 @@ void DCNP_Graph::rebuildCSR()
     }
 }
 
-uint32_t DCNP_Graph::nextEpoch() const
+void DCNP_Graph::computeTree(Node v, BfsScratch &scratch)
 {
-    if (++currentEpoch_ == 0)
-    {
-        std::fill(visitEpoch_.begin(), visitEpoch_.end(), 0u);
-        currentEpoch_ = 1;
-    }
-    return currentEpoch_;
-}
-
-void DCNP_Graph::bfsKTree(Node v)
-{
-    totalTreeSize_ -= treeSize_[v];
     auto &members = treeMembers_[v];
     members.clear();
     treeSize_[v] = 0;
@@ -78,70 +96,84 @@ void DCNP_Graph::bfsKTree(Node v)
         return;
     }
 
-    const uint32_t epoch = nextEpoch();
+    scratch.ensure(numNodes_);
+    const uint32_t epoch = scratch.nextEpoch();
     size_t head = 0;
     size_t tail = 0;
-    bfsQueue_[tail++] = v;
-    visitEpoch_[v] = epoch;
-    bfsLevel_[v] = 0;
+    scratch.queue[tail++] = v;
+    scratch.visitEpoch[v] = epoch;
+    scratch.level[v] = 0;
 
     while (head < tail)
     {
-        const Node currentNode = bfsQueue_[head++];
+        const Node currentNode = scratch.queue[head++];
 
-        if (bfsLevel_[currentNode] < kHops_)
+        if (scratch.level[currentNode] < kHops_)
         {
             const int rowEnd = csrOffset_[currentNode + 1];
             for (int idx = csrOffset_[currentNode]; idx < rowEnd; ++idx)
             {
                 const Node neighbor = csrAdj_[idx];
-                if (removedFlag_[neighbor] || visitEpoch_[neighbor] == epoch)
+                if (removedFlag_[neighbor]
+                    || scratch.visitEpoch[neighbor] == epoch)
                 {
                     continue;
                 }
-                visitEpoch_[neighbor] = epoch;
-                bfsLevel_[neighbor] = bfsLevel_[currentNode] + 1;
-                bfsQueue_[tail++] = neighbor;
+                scratch.visitEpoch[neighbor] = epoch;
+                scratch.level[neighbor] = scratch.level[currentNode] + 1;
+                scratch.queue[tail++] = neighbor;
             }
         }
     }
 
-    members.assign(bfsQueue_.begin() + 1, bfsQueue_.begin() + tail);
+    members.assign(scratch.queue.begin() + 1, scratch.queue.begin() + tail);
     treeSize_[v] = static_cast<int>(members.size());
+}
+
+void DCNP_Graph::bfsKTree(Node v)
+{
+    totalTreeSize_ -= treeSize_[v];
+    computeTree(v, ensureScratch(1)[0]);
     totalTreeSize_ += treeSize_[v];
 }
 
-int DCNP_Graph::bfsTreeSizeOnly(Node v) const
+int DCNP_Graph::bfsCountFrom(Node v,
+                             Node forcedRemoved,
+                             Node forcedPresent,
+                             BfsScratch &scratch) const
 {
-    if (removedFlag_[v])
+    if (v == forcedRemoved || (removedFlag_[v] && v != forcedPresent))
     {
         return 0;
     }
 
-    const uint32_t epoch = nextEpoch();
+    scratch.ensure(numNodes_);
+    const uint32_t epoch = scratch.nextEpoch();
     size_t head = 0;
     size_t tail = 0;
-    bfsQueue_[tail++] = v;
-    visitEpoch_[v] = epoch;
-    bfsLevel_[v] = 0;
+    scratch.queue[tail++] = v;
+    scratch.visitEpoch[v] = epoch;
+    scratch.level[v] = 0;
 
     while (head < tail)
     {
-        const Node currentNode = bfsQueue_[head++];
+        const Node currentNode = scratch.queue[head++];
 
-        if (bfsLevel_[currentNode] < kHops_)
+        if (scratch.level[currentNode] < kHops_)
         {
             const int rowEnd = csrOffset_[currentNode + 1];
             for (int idx = csrOffset_[currentNode]; idx < rowEnd; ++idx)
             {
                 const Node neighbor = csrAdj_[idx];
-                if (removedFlag_[neighbor] || visitEpoch_[neighbor] == epoch)
+                if (neighbor == forcedRemoved
+                    || (removedFlag_[neighbor] && neighbor != forcedPresent)
+                    || scratch.visitEpoch[neighbor] == epoch)
                 {
                     continue;
                 }
-                visitEpoch_[neighbor] = epoch;
-                bfsLevel_[neighbor] = bfsLevel_[currentNode] + 1;
-                bfsQueue_[tail++] = neighbor;
+                scratch.visitEpoch[neighbor] = epoch;
+                scratch.level[neighbor] = scratch.level[currentNode] + 1;
+                scratch.queue[tail++] = neighbor;
             }
         }
     }
@@ -151,9 +183,19 @@ int DCNP_Graph::bfsTreeSizeOnly(Node v) const
 
 void DCNP_Graph::buildTree()
 {
-    for (int i = 0; i < numNodes_; i++)
+    // Each node's tree is an independent BFS; treeMembers_[v]/treeSize_[v]
+    // are written only by the worker owning index v, and the running total is
+    // re-derived afterwards in a fixed order, so the result is identical for
+    // any thread count.
+    auto &workers = ensureScratch(pdms::maxThreads());
+    pdms::parallelFor(0, numNodes_,
+                      [&](int v, int workerIdx)
+                      { computeTree(v, workers[workerIdx]); });
+
+    totalTreeSize_ = 0;
+    for (int v = 0; v < numNodes_; ++v)
     {
-        bfsKTree(i);
+        totalTreeSize_ += treeSize_[v];
     }
 }
 
@@ -284,28 +326,43 @@ std::unique_ptr<DCNP_Graph> DCNP_Graph::getRandomPartialGraph(
 
 Node DCNP_Graph::findBestNodeToRemove()
 {
-    Node bestNode = INVALID_NODE;
-    std::vector<Node> bestList;
     // Deltas are in Σ-treeSize units (2× the objective improvement), which
     // preserves all comparisons without materializing each trial removal.
+    // Candidate evaluation is read-only (the hypothetical removal is passed
+    // as forcedRemoved instead of toggling removedFlag_) and writes only to
+    // its own deltas slot, so it parallelizes with bit-identical results.
+    constexpr long long kSkipped = std::numeric_limits<long long>::min();
+    std::vector<long long> deltas(static_cast<size_t>(numNodes_), kSkipped);
+
+    auto &workers = ensureScratch(pdms::maxThreads());
+    pdms::parallelFor(0, numNodes_,
+                      [&](int i, int workerIdx)
+                      {
+                          if (removedFlag_[i])
+                          {
+                              return;
+                          }
+                          auto &scratch = workers[workerIdx];
+                          long long delta = treeSize_[i];
+                          for (Node v : treeMembers_[i])
+                          {
+                              delta += treeSize_[v]
+                                       - bfsCountFrom(v, i, INVALID_NODE, scratch);
+                          }
+                          deltas[i] = delta;
+                      });
+
+    Node bestNode = INVALID_NODE;
+    std::vector<Node> bestList;
     long long maxDelta = 0;
 
     for (Node i = 0; i < numNodes_; i++)
     {
-        if (removedFlag_[i])
+        const long long delta = deltas[i];
+        if (delta == kSkipped)
         {
             continue;
         }
-
-        removedFlag_[i] = 1;
-
-        long long delta = treeSize_[i];
-        for (Node v : treeMembers_[i])
-        {
-            delta += treeSize_[v] - bfsTreeSizeOnly(v);
-        }
-
-        removedFlag_[i] = 0;
 
         if (delta > maxDelta)
         {
@@ -330,25 +387,43 @@ Node DCNP_Graph::findBestNodeToRemove()
 
 Node DCNP_Graph::findBestNodeToAdd()
 {
+    // Same evaluation-only scheme as findBestNodeToRemove: the hypothetical
+    // re-addition is passed as forcedPresent, keeping shared state untouched
+    // so candidates can be scored in parallel with bit-identical results.
+    const std::vector<Node> candidates(removedNodes_.begin(),
+                                       removedNodes_.end());
+    std::vector<long long> deltas(candidates.size(), 0);
+
+    auto &workers = ensureScratch(pdms::maxThreads());
+    pdms::parallelFor(0, static_cast<int>(candidates.size()),
+                      [&](int k, int workerIdx)
+                      {
+                          const Node node = candidates[k];
+                          auto &scratch = workers[workerIdx];
+
+                          const int newSize
+                              = bfsCountFrom(node, INVALID_NODE, node, scratch);
+                          scratch.members.assign(
+                              scratch.queue.begin() + 1,
+                              scratch.queue.begin() + 1 + newSize);
+
+                          long long delta = newSize;
+                          for (Node v : scratch.members)
+                          {
+                              delta += bfsCountFrom(v, INVALID_NODE, node, scratch)
+                                       - treeSize_[v];
+                          }
+                          deltas[k] = delta;
+                      });
+
     Node bestNode = INVALID_NODE;
     std::vector<Node> bestList;
     long long minDelta = std::numeric_limits<long long>::max();
 
-    for (Node node : removedNodes_)
+    for (size_t k = 0; k < candidates.size(); ++k)
     {
-        removedFlag_[node] = 0;
-
-        const int newSize = bfsTreeSizeOnly(node);
-        evalMembersScratch_.assign(bfsQueue_.begin() + 1,
-                                   bfsQueue_.begin() + 1 + newSize);
-
-        long long delta = newSize;
-        for (Node v : evalMembersScratch_)
-        {
-            delta += bfsTreeSizeOnly(v) - treeSize_[v];
-        }
-
-        removedFlag_[node] = 1;
+        const long long delta = deltas[k];
+        const Node node = candidates[k];
 
         if (delta < minDelta)
         {

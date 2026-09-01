@@ -97,9 +97,10 @@ print(f"Best D-hop pairs: {result.best_obj_value}")
 print(f"Removed nodes:    {sorted(result.best_solution)}")
 ```
 
-DCNP runs the same dual-population search as CNP, but its objective is far more
-expensive per step, so PyPDMS applies a lighter set of defaults automatically —
-see [Tuning DCNP](#tuning-dcnp).
+DCNP runs the same dual-population search as CNP and uses the same parameter
+set. Its objective rebuilds a K-hop tree on every step, so a single local search
+is far more expensive; budget the run accordingly, or lower the local-search
+budget through the `l2ns_*` fields of `SolverParams`.
 
 ## API reference
 
@@ -132,43 +133,37 @@ Any `Callable[[float], bool]` works, so you can supply your own.
 from pypdms import SolverParams
 
 params = SolverParams(
-    population_size=10,   # size of each (feasible/infeasible) population
-    offspring_count=2,    # offspring per population per generation
-    transfer_interval=50, # generations between feasible<->infeasible exchanges
-    partial_ratio=0.95,   # infeasible budget = floor(budget * partial_ratio)
-    beta=0.9,             # probability RSC crossover keeps shared nodes
-    search="CHNS",        # local-search strategy
+    population_size=10,       # theta: size of each population
+    thread_count=2,           # kappa: threads, and offspring per generation
+    transfer_interval=20,     # beta: generations between population exchanges
+    partial_ratio=0.95,       # 1 - alpha, the relaxation coefficient
+    stagnation_threshold=500, # delta: idle generations before reconstruction
+    search="L2NS",            # local-search strategy
 )
 ```
 
-`search` accepts `"CHNS"` (the default), `"CHNS-ADAPT"`, or `"CHNS<N>"` for a
-fixed batch size (e.g. `"CHNS5"`). The `chns_*` fields override the CHNS
-local-search budget and matter most for DCNP.
+The defaults are the tuned values used in the paper: `theta = 10`,
+`kappa = 2`, `beta = 20`, `alpha = 0.05`, `xi = 1000`, `delta = 500`. The same
+set applies to both CNP and DCNP.
+
+`search` accepts `"L2NS"` (the default), `"L2NS-ADAPT"`, or `"L2NS<N>"` for a
+fixed destroy size (e.g. `"L2NS5"`). The `l2ns_*` fields override the
+local-search budget: `l2ns_random_idle_product` is the allowable idle iteration
+count `xi`, and each L2NS run draws a destroy size `lambda` from `[1, 50]` and
+stops after `min(500, xi / lambda)` idle iterations.
+
+### Parallelism
+
+`thread_count` (`kappa`) sets the number of worker threads, and Algorithm 2
+generates one offspring per thread. Parallelism affects wall-clock time only:
+for a fixed iteration budget the solver returns bit-identical solutions for any
+thread count. `set_max_threads` / `get_max_threads` expose the cap directly.
 
 ### `Result`
 
 `Model.solve` returns a `Result` with `best_solution`, `best_obj_value`,
 `num_iterations`, `runtime`, `best_found_at_time`, an optional per-iteration
 `stats` list, and the final `feasible_population`.
-
-## Tuning DCNP
-
-DCNP's per-step cost is high, so it ships with a different set of defaults,
-applied automatically **only when you leave these knobs at the library
-defaults**:
-
-| Knob | CNP default | DCNP default |
-|------|-------------|--------------|
-| `population_size` | 6 | **4** |
-| `transfer_interval` | 50 | **5** |
-| `chns_random_idle_product` | 2000 | **100** |
-| `chns_random_min_idle_steps` | 40 | **20** |
-| `chns_random_max_idle_steps` | 1000 | **80** |
-| `chns_random_batch_max` | 50 | **15** |
-
-Pass an explicit value (or any `chns_*` field) to override. With the old CNP
-defaults, DCNP can fail to complete even a single generation within a time
-budget on medium instances.
 
 ## Development
 

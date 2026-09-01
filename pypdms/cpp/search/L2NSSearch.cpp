@@ -1,7 +1,7 @@
-#include "CHNSSearch.h"
+#include "L2NSSearch.h"
 
-LocalSearchResult runCHNS(
-    CNP_Graph &graph, int seed, const CHNSConfig &chns, Deadline deadline)
+LocalSearchResult runL2NS(
+    CNP_Graph &graph, int seed, const L2NSConfig &l2ns, Deadline deadline)
 {
     RandomNumberGenerator rng;
     rng.setSeed(seed);
@@ -13,17 +13,21 @@ LocalSearchResult runCHNS(
     long numSteps = 0;
     long numIdleSteps = 0;
 
-    int runMaxIdleSteps = chns.maxIdleSteps;
-    int fixedBatchSize = chns.minBatchSize;
+    int runMaxIdleSteps = l2ns.maxIdleSteps;
+    int fixedBatchSize = l2ns.minBatchSize;
 
-    if (chns.randomizeBatchAndIdle)
+    if (l2ns.randomizeBatchAndIdle)
     {
-        const int batchRange = chns.randomBatchMax - chns.randomBatchMin + 1;
-        fixedBatchSize = chns.randomBatchMin + rng.generateIndex(batchRange);
+        // Algorithm 3, lines 2-6: draw the destroy size lambda uniformly from
+        // [1, 50], then cap the idle-iteration budget of this run at
+        // xi' = min(500, xi / lambda), where xi is the allowable idle
+        // iteration count of Table 1.
+        const int batchRange = l2ns.randomBatchMax - l2ns.randomBatchMin + 1;
+        fixedBatchSize = l2ns.randomBatchMin + rng.generateIndex(batchRange);
         runMaxIdleSteps = std::clamp(
-            chns.randomIdleProduct / fixedBatchSize,
-            chns.randomMinIdleSteps,
-            chns.randomMaxIdleSteps);
+            l2ns.randomIdleProduct / fixedBatchSize,
+            l2ns.randomMinIdleSteps,
+            l2ns.randomMaxIdleSteps);
     }
 
     while (numIdleSteps < runMaxIdleSteps)
@@ -36,13 +40,13 @@ LocalSearchResult runCHNS(
         ++numSteps;
 
         int batchSize = fixedBatchSize;
-        if (!chns.randomizeBatchAndIdle
-            && chns.minBatchSize != chns.maxBatchSize)
+        if (!l2ns.randomizeBatchAndIdle
+            && l2ns.minBatchSize != l2ns.maxBatchSize)
         {
             const int batchLevel
-                = static_cast<int>(numIdleSteps / chns.batchIdleThreshold);
+                = static_cast<int>(numIdleSteps / l2ns.batchIdleThreshold);
             batchSize = std::min(
-                chns.maxBatchSize, chns.minBatchSize + 2 * batchLevel);
+                l2ns.maxBatchSize, l2ns.minBatchSize + 2 * batchLevel);
         }
 
         const int activeNodes = currentGraph.getNumNodes()
@@ -59,7 +63,7 @@ LocalSearchResult runCHNS(
         {
             const auto componentToRemove = currentGraph.selectRemovedComponent();
             const Node nodeToRemove
-                = rng.generateProbability() < chns.theta
+                = rng.generateProbability() < l2ns.theta
                     ? currentGraph.impactSelectNodeFromComponent(componentToRemove)
                     : currentGraph.ageSelectNodeFromComponent(componentToRemove);
             currentGraph.removeNode(nodeToRemove);

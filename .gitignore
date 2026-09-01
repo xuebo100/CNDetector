@@ -24,3 +24,11 @@ __pycache__/
 .claude/
 .venv/
 venv/
+
+# Manuscript sources and local working copies (not part of the package)
+Manuscript*.tex
+Manuscript*.pdf
+Manuscript*.ent
+Manuscript*.synctex.gz
+*.pdf
+PDMS并行版/

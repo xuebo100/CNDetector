@@ -6,11 +6,12 @@ from importlib import metadata
 
 from .Model import Model
 from .Result import Result
+from ._pypdms import get_max_threads, set_max_threads
 from .constants import (
-    CHNS,
     CNP,
     DCNP,
     DEFAULT_DISPLAY_INTERVAL,
+    L2NS,
     PACKAGE_LOGGER_NAME,
 )
 from .params import SolverParams
@@ -37,10 +38,10 @@ except metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
-    "CHNS",
     "CNP",
     "DCNP",
     "DEFAULT_DISPLAY_INTERVAL",
+    "L2NS",
     "MaxIterations",
     "MaxRuntime",
     "Model",
@@ -48,7 +49,9 @@ __all__ = [
     "Result",
     "SolverParams",
     "StoppingCriterion",
+    "get_max_threads",
     "read",
     "read_adjacency_list_format",
     "read_dimacs_edge_format",
+    "set_max_threads",
 ]

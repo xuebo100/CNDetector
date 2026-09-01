@@ -67,7 +67,8 @@ class DCNP_Graph:
 
 class SolverConfig:
     population_size: int
-    offspring_count: int
+    thread_count: int
+    stagnation_threshold: int
     transfer_interval: int
     seed: int
     partial_ratio: float
@@ -75,10 +76,10 @@ class SolverConfig:
     display_interval: float
     max_runtime: float
     search: str
-    chns: CHNSConfig
+    l2ns: L2NSConfig
     def __init__(self) -> None: ...
 
-class CHNSConfig:
+class L2NSConfig:
     max_idle_steps: int
     theta: float
     min_batch_size: int
@@ -145,13 +146,15 @@ class DCNPDualPopulation:
     def get_feasible_population_size(self) -> int: ...
     def get_feasible_iteration_count(self) -> int: ...
 
-def run_chns(
-    graph: CNP_Graph, seed: int, config: CHNSConfig
+def run_l2ns(
+    graph: CNP_Graph, seed: int, config: L2NSConfig
 ) -> LocalSearchResult: ...
-def run_dcnp_chns(
-    graph: DCNP_Graph, seed: int, config: CHNSConfig
+def run_dcnp_l2ns(
+    graph: DCNP_Graph, seed: int, config: L2NSConfig
 ) -> LocalSearchResult: ...
-def resolve_chns_config(config: SolverConfig) -> CHNSConfig: ...
+def resolve_l2ns_config(config: SolverConfig) -> L2NSConfig: ...
+def set_max_threads(count: int) -> None: ...
+def get_max_threads() -> int: ...
 def deterministic_seed(
     base_seed: int, stream_id: int, iteration: int = 0, slot: int = 0
 ) -> int: ...

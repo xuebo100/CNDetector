@@ -2,10 +2,10 @@
 #define DCNP_SEARCH_H
 
 #include "../Graph/DCNP_Graph.h"
-#include "CHNSSearch.h"
+#include "L2NSSearch.h"
 
-LocalSearchResult runDCNPCHNS(
-    DCNP_Graph &graph, int seed, const CHNSConfig &chns,
+LocalSearchResult runDCNPL2NS(
+    DCNP_Graph &graph, int seed, const L2NSConfig &l2ns,
     Deadline deadline = noDeadline());
 
 #endif // DCNP_SEARCH_H

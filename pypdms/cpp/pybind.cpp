@@ -1,9 +1,10 @@
 #include "Graph/CNP_Graph.h"
 #include "Graph/DCNP_Graph.h"
+#include "ParallelFor.h"
 #include "Population.h"
 #include "ProblemData.h"
 #include "crossover/reduceSolveCombine.h"
-#include "search/CHNSSearch.h"
+#include "search/L2NSSearch.h"
 #include "search/DCNPSearch.h"
 
 #include <pybind11/functional.h>
@@ -182,7 +183,8 @@ PYBIND11_MODULE(_pypdms, m)
     py::class_<SolverConfig>(m, "SolverConfig")
         .def(py::init<>())
         .def_readwrite("population_size", &SolverConfig::populationSize)
-        .def_readwrite("offspring_count", &SolverConfig::offspringCount)
+        .def_readwrite("thread_count", &SolverConfig::threadCount)
+        .def_readwrite("stagnation_threshold", &SolverConfig::stagnationThreshold)
         .def_readwrite("transfer_interval", &SolverConfig::transferInterval)
         .def_readwrite("seed", &SolverConfig::seed)
         .def_readwrite("partial_ratio", &SolverConfig::partialRatio)
@@ -190,22 +192,22 @@ PYBIND11_MODULE(_pypdms, m)
         .def_readwrite("display_interval", &SolverConfig::displayInterval)
         .def_readwrite("max_runtime", &SolverConfig::maxRuntime)
         .def_readwrite("search", &SolverConfig::search)
-        .def_readwrite("chns", &SolverConfig::chns);
+        .def_readwrite("l2ns", &SolverConfig::l2ns);
 
-    // CHNSConfig
-    py::class_<CHNSConfig>(m, "CHNSConfig")
+    // L2NSConfig
+    py::class_<L2NSConfig>(m, "L2NSConfig")
         .def(py::init<>())
-        .def_readwrite("max_idle_steps", &CHNSConfig::maxIdleSteps)
-        .def_readwrite("theta", &CHNSConfig::theta)
-        .def_readwrite("min_batch_size", &CHNSConfig::minBatchSize)
-        .def_readwrite("max_batch_size", &CHNSConfig::maxBatchSize)
-        .def_readwrite("batch_idle_threshold", &CHNSConfig::batchIdleThreshold)
-        .def_readwrite("randomize_batch_and_idle", &CHNSConfig::randomizeBatchAndIdle)
-        .def_readwrite("random_batch_min", &CHNSConfig::randomBatchMin)
-        .def_readwrite("random_batch_max", &CHNSConfig::randomBatchMax)
-        .def_readwrite("random_idle_product", &CHNSConfig::randomIdleProduct)
-        .def_readwrite("random_min_idle_steps", &CHNSConfig::randomMinIdleSteps)
-        .def_readwrite("random_max_idle_steps", &CHNSConfig::randomMaxIdleSteps);
+        .def_readwrite("max_idle_steps", &L2NSConfig::maxIdleSteps)
+        .def_readwrite("theta", &L2NSConfig::theta)
+        .def_readwrite("min_batch_size", &L2NSConfig::minBatchSize)
+        .def_readwrite("max_batch_size", &L2NSConfig::maxBatchSize)
+        .def_readwrite("batch_idle_threshold", &L2NSConfig::batchIdleThreshold)
+        .def_readwrite("randomize_batch_and_idle", &L2NSConfig::randomizeBatchAndIdle)
+        .def_readwrite("random_batch_min", &L2NSConfig::randomBatchMin)
+        .def_readwrite("random_batch_max", &L2NSConfig::randomBatchMax)
+        .def_readwrite("random_idle_product", &L2NSConfig::randomIdleProduct)
+        .def_readwrite("random_min_idle_steps", &L2NSConfig::randomMinIdleSteps)
+        .def_readwrite("random_max_idle_steps", &L2NSConfig::randomMaxIdleSteps);
 
     // IterationEvent
     py::class_<IterationEvent>(m, "IterationEvent")
@@ -236,23 +238,29 @@ PYBIND11_MODULE(_pypdms, m)
         .def_readwrite("obj_value", &LocalSearchResult::objValue);
 
     // Free functions
-    m.def("run_chns",
-          [](CNP_Graph &graph, int seed, const CHNSConfig &config)
+    m.def("run_l2ns",
+          [](CNP_Graph &graph, int seed, const L2NSConfig &config)
           {
               py::gil_scoped_release release;
-              return runCHNS(graph, seed, config);
+              return runL2NS(graph, seed, config);
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
-    m.def("run_dcnp_chns",
-          [](DCNP_Graph &graph, int seed, const CHNSConfig &config)
+    m.def("run_dcnp_l2ns",
+          [](DCNP_Graph &graph, int seed, const L2NSConfig &config)
           {
               py::gil_scoped_release release;
-              return runDCNPCHNS(graph, seed, config);
+              return runDCNPL2NS(graph, seed, config);
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
-    m.def("resolve_chns_config", &resolveCHNSConfig, py::arg("config"));
+    m.def("resolve_l2ns_config", &resolveL2NSConfig, py::arg("config"));
+
+    m.def("set_max_threads", &pdms::setMaxThreads, py::arg("count"),
+          "Cap the solver's worker threads (0 restores the hardware default). "
+          "Results are identical for any thread count.");
+    m.def("get_max_threads", &pdms::maxThreads,
+          "Effective worker-thread cap currently in use.");
 
     m.def("deterministic_seed", &deterministicSeed,
           py::arg("base_seed"), py::arg("stream_id"),

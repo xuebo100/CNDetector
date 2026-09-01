@@ -6,9 +6,10 @@ from typing import Optional
 from .constants import (
     DEFAULT_BETA,
     DEFAULT_DISPLAY_INTERVAL,
-    DEFAULT_OFFSPRING_COUNT,
     DEFAULT_PARTIAL_RATIO,
     DEFAULT_POPULATION_SIZE,
+    DEFAULT_STAGNATION_THRESHOLD,
+    DEFAULT_THREAD_COUNT,
     DEFAULT_TRANSFER_INTERVAL,
 )
 
@@ -17,36 +18,45 @@ from .constants import (
 class SolverParams:
     """Configuration for the IRMS dual-population solver.
 
-    The ``chns_*`` fields override the CHNS local-search budget. They default
+    The ``l2ns_*`` fields override the L2NS local-search budget. They default
     to ``None`` (use the native defaults, tuned for CNP). They matter most for
-    DCNP, whose objective rebuilds K-hop trees every step, making each CHNS run
+    DCNP, whose objective rebuilds K-hop trees every step, making each L2NS run
     far more expensive than in CNP; capping the idle-step budget keeps a single
     local search cheap enough for the population to actually turn over within a
     time budget. See :meth:`Model.solve` for the DCNP-specific defaults.
     """
 
+    # theta: size of each of the two populations.
     population_size: int = DEFAULT_POPULATION_SIZE
-    offspring_count: int = DEFAULT_OFFSPRING_COUNT
+    # kappa: thread count; also the number of offspring per population per
+    # generation, since Algorithm 2 runs one offspring per thread.
+    thread_count: int = DEFAULT_THREAD_COUNT
+    # beta: generations between two heterogeneous population cooperations.
     transfer_interval: int = DEFAULT_TRANSFER_INTERVAL
+    # 1 - alpha, the relaxation coefficient of the auxiliary population.
     partial_ratio: float = DEFAULT_PARTIAL_RATIO
+    # delta: non-improving generations that trigger population reconstruction.
+    stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
     beta: float = DEFAULT_BETA
     display_interval: float = DEFAULT_DISPLAY_INTERVAL
-    search: str = "CHNS"
+    search: str = "L2NS"
 
-    # CHNS local-search budget overrides (None -> native default). See the
+    # L2NS local-search budget overrides (None -> native default). See the
     # class docstring; these are the dominant cost knobs for DCNP.
-    chns_max_idle_steps: Optional[int] = None
-    chns_theta: Optional[float] = None
-    chns_random_batch_max: Optional[int] = None
-    chns_random_idle_product: Optional[int] = None
-    chns_random_min_idle_steps: Optional[int] = None
-    chns_random_max_idle_steps: Optional[int] = None
+    l2ns_max_idle_steps: Optional[int] = None
+    l2ns_theta: Optional[float] = None
+    l2ns_random_batch_max: Optional[int] = None
+    l2ns_random_idle_product: Optional[int] = None
+    l2ns_random_min_idle_steps: Optional[int] = None
+    l2ns_random_max_idle_steps: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.population_size < 2:
             raise ValueError("population_size must be >= 2.")
-        if self.offspring_count < 1:
-            raise ValueError("offspring_count must be >= 1.")
+        if self.thread_count < 1:
+            raise ValueError("thread_count must be >= 1.")
+        if self.stagnation_threshold < 1:
+            raise ValueError("stagnation_threshold must be >= 1.")
         if self.transfer_interval < 1:
             raise ValueError("transfer_interval must be >= 1.")
         if not 0 < self.partial_ratio < 1:
@@ -55,24 +65,24 @@ class SolverParams:
             raise ValueError("beta must be in [0, 1].")
         if self.display_interval <= 0:
             raise ValueError("display_interval must be positive.")
-        if self.chns_max_idle_steps is not None and self.chns_max_idle_steps < 1:
-            raise ValueError("chns_max_idle_steps must be >= 1.")
-        if self.chns_theta is not None and not 0 <= self.chns_theta <= 1:
-            raise ValueError("chns_theta must be in [0, 1].")
-        if self.chns_random_batch_max is not None and self.chns_random_batch_max < 1:
-            raise ValueError("chns_random_batch_max must be >= 1.")
-        if (self.chns_random_idle_product is not None
-                and self.chns_random_idle_product < 1):
-            raise ValueError("chns_random_idle_product must be >= 1.")
-        if (self.chns_random_min_idle_steps is not None
-                and self.chns_random_min_idle_steps < 1):
-            raise ValueError("chns_random_min_idle_steps must be >= 1.")
-        if (self.chns_random_max_idle_steps is not None
-                and self.chns_random_max_idle_steps < 1):
-            raise ValueError("chns_random_max_idle_steps must be >= 1.")
-        if (self.chns_random_min_idle_steps is not None
-                and self.chns_random_max_idle_steps is not None
-                and self.chns_random_min_idle_steps > self.chns_random_max_idle_steps):
+        if self.l2ns_max_idle_steps is not None and self.l2ns_max_idle_steps < 1:
+            raise ValueError("l2ns_max_idle_steps must be >= 1.")
+        if self.l2ns_theta is not None and not 0 <= self.l2ns_theta <= 1:
+            raise ValueError("l2ns_theta must be in [0, 1].")
+        if self.l2ns_random_batch_max is not None and self.l2ns_random_batch_max < 1:
+            raise ValueError("l2ns_random_batch_max must be >= 1.")
+        if (self.l2ns_random_idle_product is not None
+                and self.l2ns_random_idle_product < 1):
+            raise ValueError("l2ns_random_idle_product must be >= 1.")
+        if (self.l2ns_random_min_idle_steps is not None
+                and self.l2ns_random_min_idle_steps < 1):
+            raise ValueError("l2ns_random_min_idle_steps must be >= 1.")
+        if (self.l2ns_random_max_idle_steps is not None
+                and self.l2ns_random_max_idle_steps < 1):
+            raise ValueError("l2ns_random_max_idle_steps must be >= 1.")
+        if (self.l2ns_random_min_idle_steps is not None
+                and self.l2ns_random_max_idle_steps is not None
+                and self.l2ns_random_min_idle_steps > self.l2ns_random_max_idle_steps):
             raise ValueError(
-                "chns_random_min_idle_steps must be <= chns_random_max_idle_steps."
+                "l2ns_random_min_idle_steps must be <= l2ns_random_max_idle_steps."
             )

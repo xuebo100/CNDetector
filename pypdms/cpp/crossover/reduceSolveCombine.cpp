@@ -24,28 +24,28 @@ int deterministicSeed(
     return seed == 0 ? 1 : seed;
 }
 
-CHNSConfig resolveCHNSConfig(const SolverConfig &config)
+L2NSConfig resolveL2NSConfig(const SolverConfig &config)
 {
-    CHNSConfig resolved = config.chns;
+    L2NSConfig resolved = config.l2ns;
 
-    if (config.search == "CHNS")
+    if (config.search == "L2NS")
     {
         resolved.randomizeBatchAndIdle = true;
         return resolved;
     }
 
-    if (config.search == "CHNS-ADAPT")
+    if (config.search == "L2NS-ADAPT")
     {
         resolved.randomizeBatchAndIdle = false;
         return resolved;
     }
 
-    if (config.search.rfind("CHNS", 0) == 0 && config.search.size() > 4)
+    if (config.search.rfind("L2NS", 0) == 0 && config.search.size() > 4)
     {
         const int fixedBatchSize = std::stoi(config.search.substr(4));
         if (fixedBatchSize <= 0)
         {
-            throw std::runtime_error("CHNS fixed batch size must be positive");
+            throw std::runtime_error("L2NS fixed batch size must be positive");
         }
         resolved.randomizeBatchAndIdle = false;
         resolved.minBatchSize = fixedBatchSize;
@@ -123,7 +123,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
 
     const LocalSearchResult result
         = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x5003u),
-                         config.resolvedChns, deadline);
+                         config.resolvedL2ns, deadline);
 
     Solution finalNodes = nodesToRemove;
     finalNodes.insert(result.solution.begin(), result.solution.end());

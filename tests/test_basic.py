@@ -156,7 +156,7 @@ def test_solver_params_validation():
     with pytest.raises(ValueError):
         SolverParams(population_size=1)
     with pytest.raises(ValueError):
-        SolverParams(offspring_count=0)
+        SolverParams(thread_count=0)
     with pytest.raises(ValueError):
         SolverParams(transfer_interval=0)
     with pytest.raises(ValueError):
@@ -173,11 +173,11 @@ def test_custom_solver_params():
     model = _cycle_with_chords_model()
     params = SolverParams(
         population_size=4,
-        offspring_count=1,
+        thread_count=1,
         transfer_interval=5,
         partial_ratio=0.5,
         beta=0.7,
-        search="CHNS",
+        search="L2NS",
     )
     result = model.solve(
         budget=3,

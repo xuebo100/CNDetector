@@ -38,6 +38,10 @@ endif
 SRC_DIR = 'pypdms' / 'cpp'
 INCLUDES = include_directories(SRC_DIR)
 
+# ParallelFor.h spawns std::thread workers, so every target that pulls it in
+# needs the platform thread library (-pthread on Linux).
+threads_dep = dependency('threads')
+
 libgraph = static_library(
     'graph',
     [
@@ -45,12 +49,13 @@ libgraph = static_library(
         SRC_DIR / 'Graph' / 'DCNP_Graph.cpp',
     ],
     include_directories: INCLUDES,
+    dependencies: threads_dep,
 )
 
 libsearch = static_library(
     'search',
     [
-        SRC_DIR / 'search' / 'CHNSSearch.cpp',
+        SRC_DIR / 'search' / 'L2NSSearch.cpp',
         SRC_DIR / 'search' / 'DCNPSearch.cpp',
     ],
     include_directories: INCLUDES,
@@ -73,11 +78,12 @@ libcore = static_library(
         SRC_DIR / 'ProblemData.cpp',
     ],
     include_directories: INCLUDES,
+    dependencies: threads_dep,
     link_with: [libgraph, libsearch, libcrossover],
 )
 
 py = import('python').find_installation()
-dependencies = [py.dependency(), dependency('pybind11')]
+dependencies = [py.dependency(), dependency('pybind11'), threads_dep]
 
 py.extension_module(
     '_pypdms',

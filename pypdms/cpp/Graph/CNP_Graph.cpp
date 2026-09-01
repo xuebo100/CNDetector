@@ -447,15 +447,14 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
     for (size_t i = 0; i < numComponents; ++i)
     {
         const size_t size = connectedComponents_[i].size();
-        if (size > 2)
-        {
-            minSize = std::min(minSize, static_cast<int>(size));
-            maxSize = std::max(maxSize, static_cast<int>(size));
-        }
+        minSize = std::min(minSize, static_cast<int>(size));
+        maxSize = std::max(maxSize, static_cast<int>(size));
     }
-    // Determine the median threshold.
-    const double sizeThreshold
-        = maxSize - (maxSize - minSize) * 0.5 - rng_.generateIndex(3);
+
+    // Definition 1 (large connected component): C is large when
+    // |C| >= (|C_max| + |C_min|) / 2, taken over all components of the
+    // residual graph.
+    const double sizeThreshold = (maxSize + minSize) / 2.0;
 
     for (size_t i = 0; i < numComponents; ++i)
     {

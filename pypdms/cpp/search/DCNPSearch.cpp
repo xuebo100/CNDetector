@@ -1,7 +1,7 @@
 #include "DCNPSearch.h"
 
-LocalSearchResult runDCNPCHNS(
-    DCNP_Graph &graph, int seed, const CHNSConfig &chns, Deadline deadline)
+LocalSearchResult runDCNPL2NS(
+    DCNP_Graph &graph, int seed, const L2NSConfig &l2ns, Deadline deadline)
 {
     RandomNumberGenerator rng;
     rng.setSeed(seed);
@@ -12,17 +12,17 @@ LocalSearchResult runDCNPCHNS(
     long numSteps = 0;
     long numIdleSteps = 0;
 
-    int runMaxIdleSteps = chns.maxIdleSteps;
-    int fixedBatchSize = chns.minBatchSize;
+    int runMaxIdleSteps = l2ns.maxIdleSteps;
+    int fixedBatchSize = l2ns.minBatchSize;
 
-    if (chns.randomizeBatchAndIdle)
+    if (l2ns.randomizeBatchAndIdle)
     {
-        const int batchRange = chns.randomBatchMax - chns.randomBatchMin + 1;
-        fixedBatchSize = chns.randomBatchMin + rng.generateIndex(batchRange);
+        const int batchRange = l2ns.randomBatchMax - l2ns.randomBatchMin + 1;
+        fixedBatchSize = l2ns.randomBatchMin + rng.generateIndex(batchRange);
         runMaxIdleSteps = std::clamp(
-            chns.randomIdleProduct / fixedBatchSize,
-            chns.randomMinIdleSteps,
-            chns.randomMaxIdleSteps);
+            l2ns.randomIdleProduct / fixedBatchSize,
+            l2ns.randomMinIdleSteps,
+            l2ns.randomMaxIdleSteps);
     }
 
     while (numIdleSteps < runMaxIdleSteps)
@@ -35,13 +35,13 @@ LocalSearchResult runDCNPCHNS(
         ++numSteps;
 
         int batchSize = fixedBatchSize;
-        if (!chns.randomizeBatchAndIdle
-            && chns.minBatchSize != chns.maxBatchSize)
+        if (!l2ns.randomizeBatchAndIdle
+            && l2ns.minBatchSize != l2ns.maxBatchSize)
         {
             const int batchLevel
-                = static_cast<int>(numIdleSteps / chns.batchIdleThreshold);
+                = static_cast<int>(numIdleSteps / l2ns.batchIdleThreshold);
             batchSize = std::min(
-                chns.maxBatchSize, chns.minBatchSize + 2 * batchLevel);
+                l2ns.maxBatchSize, l2ns.minBatchSize + 2 * batchLevel);
         }
 
         const int activeNodes = graph.getNumNodes()
@@ -56,7 +56,7 @@ LocalSearchResult runDCNPCHNS(
         int removedCount = 0;
         for (int i = 0; i < batchSize; ++i)
         {
-            const Node nodeToRemove = rng.generateProbability() < chns.theta
+            const Node nodeToRemove = rng.generateProbability() < l2ns.theta
                 ? graph.findBestNodeToRemove()
                 : graph.randomSelectNodeToRemove();
             if (nodeToRemove == INVALID_NODE)

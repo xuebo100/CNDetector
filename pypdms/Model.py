@@ -12,8 +12,6 @@ from .Result import Result
 from .constants import (
     CNP,
     DCNP,
-    DEFAULT_POPULATION_SIZE,
-    DEFAULT_TRANSFER_INTERVAL,
     PACKAGE_LOGGER_NAME,
 )
 from .params import SolverParams
@@ -24,65 +22,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(PACKAGE_LOGGER_NAME)
 
-# DCNP-specific CHNS budget. DCNP's objective rebuilds K-hop trees every step,
-# so a single CHNS run is far more expensive than in CNP. The native defaults
-# (randomIdleProduct=2000, randomMaxIdleSteps=1000, randomBatchMax=50) make one
-# local search take tens of seconds on 300+ node instances, so the population
-# never turns over. These lighter caps keep each CHNS run cheap enough that the
-# dual population evolves many generations within a few-minute budget. Tuned on
-# USAir97 / Circuit / Ecoli (100-500 node instances). Any field left out here
-# falls back to the native default.
-_DCNP_CHNS_DEFAULTS: dict[str, int | float] = {
-    "random_idle_product": 100,
-    "random_min_idle_steps": 20,
-    "random_max_idle_steps": 80,
-    "random_batch_max": 15,
-    "theta": 0.3,
-}
 
-# DCNP-friendly dual-population defaults. DCNP's per-CHNS cost is high, so a
-# large population/exchange interval (the CNP defaults, 6 / 50) means the
-# population barely finishes initialization within a time budget and the
-# feasible<->infeasible exchange never fires. A smaller population turns over
-# faster and a short exchange interval lets the two populations actually mix.
-# Applied only when the caller left these at the library defaults.
-_DCNP_POPULATION_SIZE = 4
-_DCNP_TRANSFER_INTERVAL = 5
-
-
-def _apply_chns_overrides(
+def _apply_l2ns_overrides(
     config: "SolverConfig",
     params: SolverParams,
-    dcnp_defaults: Optional[dict[str, "int | float"]] = None,
 ) -> None:
-    """Write the CHNS local-search budget into ``config.chns``.
+    """Write the L2NS local-search budget into ``config.l2ns``.
 
-    Priority: ``params.chns_*`` (explicitly set by the user) > ``dcnp_defaults``
-    (problem-specific, better defaults) > native C++ defaults (leave
-    ``config.chns`` untouched).
+    Fields left at ``None`` in ``params`` keep the native C++ defaults, which
+    implement the local-search budget of the paper.
 
     Args:
-        config: native SolverConfig whose ``chns`` sub-config is mutated in place
-        params: solver parameters, read for its ``chns_*`` override fields
-        dcnp_defaults: problem-specific CHNS defaults (keys are chns field names,
-            without the prefix)
+        config: native SolverConfig whose ``l2ns`` sub-config is mutated in place
+        params: solver parameters, read for its ``l2ns_*`` override fields
     """
-    # chns field name -> the corresponding override attribute on params
+    # l2ns field name -> the corresponding override attribute on params
     field_to_param = {
-        "max_idle_steps": "chns_max_idle_steps",
-        "theta": "chns_theta",
-        "random_batch_max": "chns_random_batch_max",
-        "random_idle_product": "chns_random_idle_product",
-        "random_min_idle_steps": "chns_random_min_idle_steps",
-        "random_max_idle_steps": "chns_random_max_idle_steps",
+        "max_idle_steps": "l2ns_max_idle_steps",
+        "theta": "l2ns_theta",
+        "random_batch_max": "l2ns_random_batch_max",
+        "random_idle_product": "l2ns_random_idle_product",
+        "random_min_idle_steps": "l2ns_random_min_idle_steps",
+        "random_max_idle_steps": "l2ns_random_max_idle_steps",
     }
-    defaults = dcnp_defaults or {}
-    for chns_field, param_attr in field_to_param.items():
+    for l2ns_field, param_attr in field_to_param.items():
         override = getattr(params, param_attr, None)
         if override is not None:
-            setattr(config.chns, chns_field, override)
-        elif chns_field in defaults:
-            setattr(config.chns, chns_field, defaults[chns_field])
+            setattr(config.l2ns, l2ns_field, override)
 
 
 def _normalize_feasible_population(
@@ -244,7 +210,7 @@ class Model:
         seed: int = 0,
         params: Optional[SolverParams] = None,
         population_size: Optional[int] = None,
-        offspring_count: Optional[int] = None,
+        thread_count: Optional[int] = None,
         search: Optional[str] = None,
         display_interval: Optional[float] = None,
         display: bool = True,
@@ -272,7 +238,7 @@ class Model:
             Random number generator seed. ``0`` is a valid seed.
         params
             Tunable solver parameters. Defaults to :class:`SolverParams()`.
-        population_size, offspring_count, search
+        population_size, thread_count, search
             Convenience overrides for the corresponding ``params`` fields.
         display_interval
             Minimum seconds between iteration log lines. Defaults to
@@ -291,7 +257,7 @@ class Model:
 
         # Resolve parameters, applying the direct keyword overrides.
         params = self._resolve_params(
-            params, population_size, offspring_count, search
+            params, population_size, thread_count, search
         )
         effective_display_interval = (
             display_interval if display_interval is not None
@@ -338,7 +304,7 @@ class Model:
     def _resolve_params(
         params: Optional[SolverParams],
         population_size: Optional[int],
-        offspring_count: Optional[int],
+        thread_count: Optional[int],
         search: Optional[str],
     ) -> SolverParams:
         """Apply direct keyword overrides on top of ``SolverParams``.
@@ -349,7 +315,7 @@ class Model:
         Args:
             params: solver parameters object
             population_size: population-size override
-            offspring_count: offspring-count override
+            thread_count: thread-count (kappa) override
             search: search-strategy override
 
         Returns:
@@ -365,7 +331,7 @@ class Model:
             key: value
             for key, value in (
                 ("population_size", population_size),
-                ("offspring_count", offspring_count),
+                ("thread_count", thread_count),
                 ("search", search),
             )
             if value is not None
@@ -414,7 +380,8 @@ class Model:
         # Configure the solver.
         config = SolverConfig()
         config.population_size = params.population_size
-        config.offspring_count = params.offspring_count
+        config.thread_count = params.thread_count
+        config.stagnation_threshold = params.stagnation_threshold
         config.transfer_interval = params.transfer_interval
         config.seed = seed
         config.partial_ratio = params.partial_ratio
@@ -449,7 +416,7 @@ class Model:
 
         The process is identical to CNP: maintain a feasible (budget ``k``) and
         an infeasible (partial budget ``⌊k * partial_ratio⌋``) population, each
-        generation producing offspring via RSC crossover plus CHNS local search
+        generation producing offspring via RSC crossover plus L2NS local search
         and pruning the population by cost + diversity ranking; every
         ``transfer_interval`` generations the best infeasible solution is
         completed to the full budget and injected into the feasible population.
@@ -461,39 +428,21 @@ class Model:
             budget, distance, seed
         )
 
-        # A single CHNS run is expensive for DCNP; a large population / long
-        # exchange interval (the CNP defaults, 6 / 50) means the population
-        # barely finishes initialization within a time budget and the exchange
-        # never fires. If the caller left these at the library defaults, replace
-        # them with a small population + short exchange interval better for DCNP.
-        dcnp_population_size = (
-            _DCNP_POPULATION_SIZE
-            if params.population_size == DEFAULT_POPULATION_SIZE
-            else params.population_size
-        )
-        dcnp_transfer_interval = (
-            _DCNP_TRANSFER_INTERVAL
-            if params.transfer_interval == DEFAULT_TRANSFER_INTERVAL
-            else params.transfer_interval
-        )
-
-        # Configure the solver (same as the CNP path).
+        # CNP and DCNP share one parameter set: the solver applies the same
+        # tuned defaults to both variants, so no problem-specific substitution
+        # takes place here.
         config = SolverConfig()
-        config.population_size = dcnp_population_size
-        config.offspring_count = params.offspring_count
-        config.transfer_interval = dcnp_transfer_interval
+        config.population_size = params.population_size
+        config.thread_count = params.thread_count
+        config.stagnation_threshold = params.stagnation_threshold
+        config.transfer_interval = params.transfer_interval
         config.seed = seed
         config.partial_ratio = params.partial_ratio
         config.beta = params.beta
         config.display_interval = effective_display_interval
         config.search = params.search
 
-        # DCNP's objective rebuilds K-hop trees every step, so a single CHNS run
-        # is far more expensive than in CNP. The default randomize-idle budget
-        # (up to 1000+ steps) makes one local search take tens of seconds on
-        # medium instances and the population stalls. Set lighter CHNS defaults
-        # for DCNP here; explicit params.chns_* still override them.
-        _apply_chns_overrides(config, params, dcnp_defaults=_DCNP_CHNS_DEFAULTS)
+        _apply_l2ns_overrides(config, params)
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
         if isinstance(max_runtime, (int, float)) and max_runtime > 0:
@@ -532,9 +481,12 @@ class Model:
         Returns:
             The solve result.
         """
-        from ._pypdms import DCNPDualPopulation, DualPopulation
+        from ._pypdms import DCNPDualPopulation, DualPopulation, set_max_threads
 
         population_cls = DCNPDualPopulation if dcnp else DualPopulation
+
+        # kappa is the thread count: one worker per offspring of a generation.
+        set_max_threads(config.thread_count)
 
         start_time = time.perf_counter()
 
