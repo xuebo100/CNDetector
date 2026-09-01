@@ -180,7 +180,6 @@ when you leave these knobs at the library defaults**:
 | `l2ns_random_min_idle_steps` | 1 | **20** |
 | `l2ns_random_max_idle_steps` | 500 | **80** |
 | `l2ns_random_batch_max` | 50 | **15** |
-| `l2ns_theta` | 0.3 | **0.3** |
 
 Passing an explicit value (or any `l2ns_*` field) overrides it. These values
 were tuned on the 100–500 node instances USAir97, Circuit and Ecoli.
