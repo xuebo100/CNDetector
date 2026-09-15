@@ -12,8 +12,8 @@ from .Result import Result
 from .constants import (
     CNP,
     DCNP,
+    DEFAULT_INTERACTION_PERIOD,
     DEFAULT_POPULATION_SIZE,
-    DEFAULT_TRANSFER_INTERVAL,
     PACKAGE_LOGGER_NAME,
 )
 from .params import SolverParams
@@ -46,7 +46,7 @@ _DCNP_L2NS_DEFAULTS: dict[str, "int | float"] = {
 # faster and a short exchange interval lets the two populations actually mix.
 # Applied only when the caller left these at the library defaults.
 _DCNP_POPULATION_SIZE = 4
-_DCNP_TRANSFER_INTERVAL = 5
+_DCNP_INTERACTION_PERIOD = 5
 
 
 def _apply_l2ns_overrides(
@@ -415,9 +415,9 @@ class Model:
         config.population_size = params.population_size
         config.thread_count = params.thread_count
         config.stagnation_threshold = params.stagnation_threshold
-        config.transfer_interval = params.transfer_interval
+        config.interaction_period = params.interaction_period
         config.seed = seed
-        config.partial_ratio = params.partial_ratio
+        config.relaxation_coefficient = params.relaxation_coefficient
         config.beta = params.beta
         config.display_interval = effective_display_interval
         config.search = params.search
@@ -448,10 +448,10 @@ class Model:
         better.
 
         The process is identical to CNP: maintain a feasible (budget ``k``) and
-        an infeasible (partial budget ``⌊k * partial_ratio⌋``) population, each
+        an infeasible (partial budget ``floor(k * (1 - alpha))``) population, each
         generation producing offspring via RSC crossover plus L2NS local search
         and pruning the population by cost + diversity ranking; every
-        ``transfer_interval`` generations the best infeasible solution is
+        ``interaction_period`` generations the best infeasible solution is
         completed to the full budget and injected into the feasible population.
         """
         from ._cndetector import SolverConfig
@@ -471,10 +471,10 @@ class Model:
             if params.population_size == DEFAULT_POPULATION_SIZE
             else params.population_size
         )
-        dcnp_transfer_interval = (
-            _DCNP_TRANSFER_INTERVAL
-            if params.transfer_interval == DEFAULT_TRANSFER_INTERVAL
-            else params.transfer_interval
+        dcnp_interaction_period = (
+            _DCNP_INTERACTION_PERIOD
+            if params.interaction_period == DEFAULT_INTERACTION_PERIOD
+            else params.interaction_period
         )
 
         # Configure the solver (same as the CNP path).
@@ -482,9 +482,9 @@ class Model:
         config.population_size = dcnp_population_size
         config.thread_count = params.thread_count
         config.stagnation_threshold = params.stagnation_threshold
-        config.transfer_interval = dcnp_transfer_interval
+        config.interaction_period = dcnp_interaction_period
         config.seed = seed
-        config.partial_ratio = params.partial_ratio
+        config.relaxation_coefficient = params.relaxation_coefficient
         config.beta = params.beta
         config.display_interval = effective_display_interval
         config.search = params.search
@@ -550,7 +550,7 @@ class Model:
         # population has something to evolve). When budget=1 we fall back to 1,
         # which equals the feasible budget.
         infeasible_budget = max(1, min(
-            math.floor(budget * config.partial_ratio),
+            math.floor(budget * (1.0 - config.relaxation_coefficient)),
             budget - 1,
         ))
 

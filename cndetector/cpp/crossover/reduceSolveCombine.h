@@ -7,7 +7,7 @@
 #include <optional>
 
 // Defaults follow the irace-tuned parameter settings of Table 1:
-// theta = 10, beta = 20, alpha = 0.05 (partialRatio = 1 - alpha),
+// theta = 10, beta = 20, alpha = 0.05,
 // xi = 1000 (L2NSConfig::randomIdleProduct), delta = 500, kappa = 2.
 struct SolverConfig
 {
@@ -17,11 +17,11 @@ struct SolverConfig
     // is also the number of offspring generated per population per generation.
     int threadCount = 2;
     // beta: generations between two heterogeneous population cooperations.
-    int transferInterval = 20;
+    int interactionPeriod = 20;
     int seed = 0;
-    // 1 - alpha, so the auxiliary population carries floor(k * partialRatio)
-    // nodes per solution.
-    double partialRatio = 0.95;
+    // alpha: relaxation coefficient. The auxiliary population carries
+    // floor(k * (1 - alpha)) nodes per solution.
+    double relaxationCoefficient = 0.05;
     // delta: consecutive non-improving generations that trigger the
     // reconstruction of the auxiliary population (Algorithm 4, lines 8-11).
     int stagnationThreshold = 500;

@@ -69,9 +69,9 @@ class SolverConfig:
     population_size: int
     thread_count: int
     stagnation_threshold: int
-    transfer_interval: int
+    interaction_period: int
     seed: int
-    partial_ratio: float
+    relaxation_coefficient: float
     beta: float
     display_interval: float
     max_runtime: float

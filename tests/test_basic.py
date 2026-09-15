@@ -158,11 +158,14 @@ def test_solver_params_validation():
     with pytest.raises(ValueError):
         SolverParams(thread_count=0)
     with pytest.raises(ValueError):
-        SolverParams(transfer_interval=0)
+        SolverParams(interaction_period=0)
     with pytest.raises(ValueError):
-        SolverParams(partial_ratio=0.0)
+        SolverParams(relaxation_coefficient=-0.1)
     with pytest.raises(ValueError):
-        SolverParams(partial_ratio=1.0)
+        SolverParams(relaxation_coefficient=1.0)
+    # alpha = 0 is valid: it makes the auxiliary population identical to the
+    # main one (see the paper's definition of the relaxation coefficient).
+    SolverParams(relaxation_coefficient=0.0)
     with pytest.raises(ValueError):
         SolverParams(beta=-0.1)
     with pytest.raises(ValueError):
@@ -174,8 +177,8 @@ def test_custom_solver_params():
     params = SolverParams(
         population_size=4,
         thread_count=1,
-        transfer_interval=5,
-        partial_ratio=0.5,
+        interaction_period=5,
+        relaxation_coefficient=0.5,
         beta=0.7,
         search="L2NS",
     )

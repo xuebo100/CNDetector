@@ -133,12 +133,12 @@ Any `Callable[[float], bool]` works, so you can supply your own.
 from cndetector import SolverParams
 
 params = SolverParams(
-    population_size=10,       # theta: size of each population
-    thread_count=2,           # kappa: threads, and offspring per generation
-    transfer_interval=20,     # beta: generations between population exchanges
-    partial_ratio=0.95,       # 1 - alpha, the relaxation coefficient
-    stagnation_threshold=500, # delta: idle generations before reconstruction
-    search="L2NS",            # local-search strategy
+    population_size=10,           # theta: size of each population
+    thread_count=2,               # kappa: threads, and offspring per generation
+    interaction_period=20,        # beta: generations between population exchanges
+    relaxation_coefficient=0.05,  # alpha: auxiliary budget = floor(k * (1 - alpha))
+    stagnation_threshold=500,     # delta: idle generations before reconstruction
+    search="L2NS",                # local-search strategy
 )
 ```
 
@@ -175,7 +175,7 @@ when you leave these knobs at the library defaults**:
 | Knob | CNP default | DCNP default |
 |------|-------------|--------------|
 | `population_size` (theta) | 10 | **4** |
-| `transfer_interval` (beta) | 20 | **5** |
+| `interaction_period` (beta) | 20 | **5** |
 | `l2ns_random_idle_product` (xi) | 1000 | **100** |
 | `l2ns_random_min_idle_steps` | 1 | **20** |
 | `l2ns_random_max_idle_steps` | 500 | **80** |

@@ -6,11 +6,11 @@ from typing import Optional
 from .constants import (
     DEFAULT_BETA,
     DEFAULT_DISPLAY_INTERVAL,
-    DEFAULT_PARTIAL_RATIO,
+    DEFAULT_INTERACTION_PERIOD,
     DEFAULT_POPULATION_SIZE,
+    DEFAULT_RELAXATION_COEFFICIENT,
     DEFAULT_STAGNATION_THRESHOLD,
     DEFAULT_THREAD_COUNT,
-    DEFAULT_TRANSFER_INTERVAL,
 )
 
 
@@ -32,9 +32,11 @@ class SolverParams:
     # generation, since Algorithm 2 runs one offspring per thread.
     thread_count: int = DEFAULT_THREAD_COUNT
     # beta: generations between two heterogeneous population cooperations.
-    transfer_interval: int = DEFAULT_TRANSFER_INTERVAL
-    # 1 - alpha, the relaxation coefficient of the auxiliary population.
-    partial_ratio: float = DEFAULT_PARTIAL_RATIO
+    interaction_period: int = DEFAULT_INTERACTION_PERIOD
+    # alpha: relaxation coefficient. The auxiliary population carries
+    # floor(k * (1 - alpha)) nodes per solution; alpha = 0 makes it
+    # identical to the main population.
+    relaxation_coefficient: float = DEFAULT_RELAXATION_COEFFICIENT
     # delta: non-improving generations that trigger population reconstruction.
     stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
     beta: float = DEFAULT_BETA
@@ -57,10 +59,10 @@ class SolverParams:
             raise ValueError("thread_count must be >= 1.")
         if self.stagnation_threshold < 1:
             raise ValueError("stagnation_threshold must be >= 1.")
-        if self.transfer_interval < 1:
-            raise ValueError("transfer_interval must be >= 1.")
-        if not 0 < self.partial_ratio < 1:
-            raise ValueError("partial_ratio must be in (0, 1).")
+        if self.interaction_period < 1:
+            raise ValueError("interaction_period must be >= 1.")
+        if not 0 <= self.relaxation_coefficient < 1:
+            raise ValueError("relaxation_coefficient must be in [0, 1).")
         if not 0 <= self.beta <= 1:
             raise ValueError("beta must be in [0, 1].")
         if self.display_interval <= 0:

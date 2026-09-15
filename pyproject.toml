@@ -1,7 +1,7 @@
 [project]
 name = "cndetector"
-version = "0.2.0"
-description = "A high-performance Python solver for Critical Node Problems using Population-based Dual Memetic Search"
+version = "0.3.0"
+description = "A high-performance solver for Critical Node Problems using parallel co-evolutionary memetic search"
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -9,8 +9,10 @@ keywords = [
     "graph",
     "optimization",
     "critical-node-problem",
+    "distance-based-critical-node-problem",
     "memetic-search",
     "metaheuristic",
+    "parallel",
 ]
 classifiers = [
     "Intended Audience :: Developers",

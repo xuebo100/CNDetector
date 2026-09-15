@@ -161,7 +161,7 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
         ++idleGenerations_;
     }
 
-    if (feasibleIteration % config_.transferInterval == 0 && !reachedDeadline())
+    if (feasibleIteration % config_.interactionPeriod == 0 && !reachedDeadline())
     {
         exchangeEvents_.push_back(
             ExchangeEvent{feasibleIteration, performExchange(feasibleIteration)});

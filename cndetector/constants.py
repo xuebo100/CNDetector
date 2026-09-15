@@ -4,8 +4,8 @@ from __future__ import annotations
 # theta = 10, kappa = 2, beta = 20, alpha = 0.05, xi = 1000, delta = 500.
 DEFAULT_POPULATION_SIZE = 10  # theta
 DEFAULT_THREAD_COUNT = 2  # kappa
-DEFAULT_TRANSFER_INTERVAL = 20  # beta
-DEFAULT_PARTIAL_RATIO = 0.95  # 1 - alpha
+DEFAULT_INTERACTION_PERIOD = 20  # beta
+DEFAULT_RELAXATION_COEFFICIENT = 0.05  # alpha
 DEFAULT_STAGNATION_THRESHOLD = 500  # delta
 DEFAULT_BETA = 0.9
 DEFAULT_DISPLAY_INTERVAL = 1.0
