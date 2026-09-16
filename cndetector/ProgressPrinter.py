@@ -25,7 +25,7 @@ class ProgressPrinter:
     def start(self, budget: int, seed: int) -> None:
         if not self._should_print:
             return
-        self._logger.info("CNDetector IRMS Solver")
+        self._logger.info("CNDetector Solver")
         self._logger.info("  Budget: %d", budget)
         self._logger.info("  Seed:   %d", seed)
 
@@ -78,16 +78,16 @@ class ProgressPrinter:
         self._last_print_time = now
         self._last_printed_iteration = iteration
 
-    def exchange(self, iteration: int, report: dict) -> None:
+    def hpc(self, iteration: int, report: dict) -> None:
         if not self._should_print:
             return
-        if not report.get("exchange_triggered", False):
+        if not report.get("hpc_triggered", False):
             return
         self._logger.info(
-            "[Exchange] Iter %5d | Candidate obj: %10d | Improved best: %s",
+            "[HPC] Iter %5d | Candidate obj: %10d | Improved best: %s",
             iteration,
-            report.get("first_population_candidate_obj", -1),
-            "yes" if report.get("first_population_improved_best", False) else "no",
+            report.get("candidate_obj_value", -1),
+            "yes" if report.get("improved_main_best", False) else "no",
         )
 
     def end(self, result: "Result") -> None:
@@ -96,7 +96,7 @@ class ProgressPrinter:
         self._logger.info(
             "----------------------------------------------------------------------"
         )
-        self._logger.info("IRMS finished.")
+        self._logger.info("CNDetector finished.")
         self._logger.info("  Total iterations: %d", result.num_iterations)
         self._logger.info("  Total runtime: %.2f seconds", result.runtime)
         self._logger.info("  Best objective: %d", result.best_obj_value)

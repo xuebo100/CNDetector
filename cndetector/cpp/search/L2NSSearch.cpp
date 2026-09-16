@@ -1,36 +1,72 @@
 #include "L2NSSearch.h"
 
+int lccDrivenDestroy(
+    CNP_Graph &graph, int destroySize, RandomNumberGenerator &rng,
+    const L2NSConfig &l2ns, long step)
+{
+    int numRemoved = 0;
+    for (int i = 0; i < destroySize; ++i)
+    {
+        // selectRemovedComponent draws uniformly from the large connected
+        // components of the residual graph.
+        const auto componentToRemove = graph.selectRemovedComponent();
+        const Node nodeToRemove
+            = rng.generateProbability() < l2ns.impactSelectionRate
+                ? graph.impactSelectNodeFromComponent(componentToRemove)
+                : graph.ageSelectNodeFromComponent(componentToRemove);
+        graph.removeNode(nodeToRemove);
+        graph.setNodeAge(nodeToRemove, step);
+        ++numRemoved;
+    }
+    return numRemoved;
+}
+
+void greedyRepair(CNP_Graph &graph, int numNodes, long step)
+{
+    for (int i = 0; i < numNodes; ++i)
+    {
+        const Node nodeToAdd = graph.greedySelectNodeToAdd();
+        if (nodeToAdd == INVALID_NODE)
+        {
+            break;
+        }
+        graph.addNode(nodeToAdd);
+        graph.setNodeAge(nodeToAdd, step);
+    }
+}
+
 LocalSearchResult runL2NS(
     CNP_Graph &graph, int seed, const L2NSConfig &l2ns, Deadline deadline)
 {
     RandomNumberGenerator rng;
     rng.setSeed(seed);
 
-    CNP_Graph &currentGraph = graph;
-    Solution bestSolution = currentGraph.getRemovedNodes();
-    int currentObjValue = currentGraph.getObjectiveValue();
+    Solution bestSolution = graph.getRemovedNodes();
+    int currentObjValue = graph.getObjectiveValue();
     int bestObjValue = currentObjValue;
     long numSteps = 0;
-    long numIdleSteps = 0;
+    // Consecutive non-improving iterations, and the limit at which this run
+    // gives up.
+    long idleIterations = 0;
+    int idleLimit = l2ns.adaptiveMaxIdleIterations;
+    // Destroy size: how many nodes one destroy step removes.
+    int destroySize = l2ns.adaptiveMinDestroySize;
 
-    int runMaxIdleSteps = l2ns.maxIdleSteps;
-    int fixedBatchSize = l2ns.minBatchSize;
-
-    if (l2ns.randomizeBatchAndIdle)
+    if (l2ns.randomizeDestroySize)
     {
-        // Algorithm 3, lines 2-6: draw the destroy size lambda uniformly from
-        // [1, 50], then cap the idle-iteration budget of this run at
-        // xi' = min(500, xi / lambda), where xi is the allowable idle
-        // iteration count of Table 1.
-        const int batchRange = l2ns.randomBatchMax - l2ns.randomBatchMin + 1;
-        fixedBatchSize = l2ns.randomBatchMin + rng.generateIndex(batchRange);
-        runMaxIdleSteps = std::clamp(
-            l2ns.randomIdleProduct / fixedBatchSize,
-            l2ns.randomMinIdleSteps,
-            l2ns.randomMaxIdleSteps);
+        // Draw the destroy size at random, then divide the idle budget by it:
+        // a larger destroy size makes each iteration more expensive, so fewer
+        // of them are allowed.
+        const int destroySizeRange
+            = l2ns.maxDestroySize - l2ns.minDestroySize + 1;
+        destroySize = l2ns.minDestroySize + rng.generateIndex(destroySizeRange);
+        idleLimit = std::clamp(
+            l2ns.allowableIdleIterations / destroySize,
+            l2ns.idleIterationFloor,
+            l2ns.idleIterationCap);
     }
 
-    while (numIdleSteps < runMaxIdleSteps)
+    while (idleIterations < idleLimit)
     {
         if (std::chrono::steady_clock::now() >= deadline)
         {
@@ -39,58 +75,43 @@ LocalSearchResult runL2NS(
 
         ++numSteps;
 
-        int batchSize = fixedBatchSize;
-        if (!l2ns.randomizeBatchAndIdle
-            && l2ns.minBatchSize != l2ns.maxBatchSize)
+        int stepDestroySize = destroySize;
+        if (!l2ns.randomizeDestroySize
+            && l2ns.adaptiveMinDestroySize != l2ns.adaptiveMaxDestroySize)
         {
-            const int batchLevel
-                = static_cast<int>(numIdleSteps / l2ns.batchIdleThreshold);
-            batchSize = std::min(
-                l2ns.maxBatchSize, l2ns.minBatchSize + 2 * batchLevel);
+            const int growthLevel
+                = static_cast<int>(idleIterations / l2ns.adaptiveGrowthInterval);
+            stepDestroySize = std::min(
+                l2ns.adaptiveMaxDestroySize,
+                l2ns.adaptiveMinDestroySize + 2 * growthLevel);
         }
 
-        const int activeNodes = currentGraph.getNumNodes()
-            - static_cast<int>(currentGraph.getRemovedNodes().size());
-        batchSize = std::min(batchSize, std::max(0, activeNodes - 1));
-        if (batchSize <= 0)
+        const int activeNodes = graph.getNumNodes()
+            - static_cast<int>(graph.getRemovedNodes().size());
+        stepDestroySize = std::min(stepDestroySize, std::max(0, activeNodes - 1));
+        if (stepDestroySize <= 0)
         {
-            ++numIdleSteps;
+            ++idleIterations;
             continue;
         }
 
-        int removedCount = 0;
-        for (int i = 0; i < batchSize; ++i)
-        {
-            const auto componentToRemove = currentGraph.selectRemovedComponent();
-            const Node nodeToRemove
-                = rng.generateProbability() < l2ns.theta
-                    ? currentGraph.impactSelectNodeFromComponent(componentToRemove)
-                    : currentGraph.ageSelectNodeFromComponent(componentToRemove);
-            currentGraph.removeNode(nodeToRemove);
-            currentGraph.setNodeAge(nodeToRemove, numSteps);
-            ++removedCount;
-        }
+        // Destroy, then repair.
+        const int numRemoved
+            = lccDrivenDestroy(graph, stepDestroySize, rng, l2ns, numSteps);
+        greedyRepair(graph, numRemoved, numSteps);
 
-        for (int i = 0; i < removedCount; ++i)
-        {
-            const Node nodeToAdd = currentGraph.greedySelectNodeToAdd();
-            if (nodeToAdd != INVALID_NODE)
-            {
-                currentGraph.addNode(nodeToAdd);
-                currentGraph.setNodeAge(nodeToAdd, numSteps);
-            }
-        }
-
-        currentObjValue = currentGraph.getObjectiveValue();
+        // Track the best solution seen and reset the idle counter whenever
+        // it improves.
+        currentObjValue = graph.getObjectiveValue();
         if (currentObjValue < bestObjValue)
         {
-            bestSolution = currentGraph.getRemovedNodes();
+            bestSolution = graph.getRemovedNodes();
             bestObjValue = currentObjValue;
-            numIdleSteps = 0;
+            idleIterations = 0;
         }
         else
         {
-            ++numIdleSteps;
+            ++idleIterations;
         }
     }
 

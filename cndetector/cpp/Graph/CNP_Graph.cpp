@@ -52,7 +52,7 @@ void CNP_Graph::rebuildCSR()
 
 int CNP_Graph::componentContribution(size_t size) const
 {
-    // CNP1 pairwise connectivity.
+    // Number of connected node pairs inside one component.
     return static_cast<int>((size * (size - 1)) / 2);
 }
 
@@ -436,11 +436,6 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
     std::vector<ComponentIndex> largeComponents;
     largeComponents.reserve(numComponents);
 
-    if (numComponents > 50)
-    {
-        return selectRemovedLargerComponent();
-    }
-
     int minSize = numNodes_;
     int maxSize = 0;
 
@@ -451,9 +446,8 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
         maxSize = std::max(maxSize, static_cast<int>(size));
     }
 
-    // Definition 1 (large connected component): C is large when
-    // |C| >= (|C_max| + |C_min|) / 2, taken over all components of the
-    // residual graph.
+    // A component counts as large when its size reaches the midpoint between
+    // the smallest and the largest component size of the residual graph.
     const double sizeThreshold = (maxSize + minSize) / 2.0;
 
     for (size_t i = 0; i < numComponents; ++i)
@@ -481,108 +475,6 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
     }
 
     return largeComponents[rng_.generateIndex(largeComponents.size())];
-}
-
-ComponentIndex CNP_Graph::selectRemovedLargerComponent() const
-{
-    size_t totalSize = numNodes_ - removedNodes.size();
-    size_t numComponents = connectedComponents_.size();
-
-    // Compute the average component size.
-    size_t avgComponentSize = std::max(
-        static_cast<size_t>(2),
-        static_cast<size_t>(std::round(static_cast<float>(totalSize)
-                                    / static_cast<float>(numComponents))));
-
-    std::vector<ComponentIndex> largeComponents;
-    std::vector<size_t> componentSizes;
-    largeComponents.reserve(numComponents);
-    componentSizes.reserve(numComponents);
-
-    size_t totalNodesInBigComponents = 0;
-    size_t maxSize = 0;
-    size_t maxIndex = 0;
-    size_t secondMaxSize = 0;
-    size_t secondMaxIndex = 0;
-
-
-    for (size_t i = 0; i < numComponents; ++i)
-    {
-        const size_t currentSize = connectedComponents_[i].size();
-
-        if (currentSize > avgComponentSize)
-        {
-            largeComponents.push_back(i);
-            componentSizes.push_back(currentSize);
-            totalNodesInBigComponents += currentSize;
-
-            if (currentSize > maxSize)
-            {
-                secondMaxSize = maxSize;
-                secondMaxIndex = maxIndex;
-                maxSize = currentSize;
-                maxIndex = i;
-            }
-            else if (currentSize > secondMaxSize)
-            {
-                secondMaxSize = currentSize;
-                secondMaxIndex = i;
-            }
-        }
-    }
-
-
-
-    if (largeComponents.empty())
-    {
-        // Fallback to component with maximum size when heuristic set is empty.
-        size_t fallbackIdx = 0;
-        size_t fallbackSize = 0;
-        for (size_t i = 0; i < connectedComponents_.size(); ++i)
-        {
-            const size_t currentSize = connectedComponents_[i].size();
-            if (currentSize > fallbackSize)
-            {
-                fallbackSize = currentSize;
-                fallbackIdx = i;
-            }
-        }
-        if (fallbackSize == 0)
-        {
-            throw std::runtime_error("no components available for selection");
-        }
-        return static_cast<ComponentIndex>(fallbackIdx);
-    }
-
-    if (largeComponents.size() == 1)
-    {
-        return rng_.generateBool(0.5) ? secondMaxIndex : largeComponents[0];
-    }
-
-    const int index = rng_.generateIndex(totalNodesInBigComponents);
-    int sum = 0;
-
-    for (size_t i = 0; i < largeComponents.size(); ++i)
-    {
-        sum += componentSizes[i];
-        if (index < sum)
-        {
-            return largeComponents[i];
-        }
-    }
-
-    return largeComponents.back();
-}
-
-Node CNP_Graph::randomSelectNodeFromComponent(
-    ComponentIndex componentIndex) const
-{
-    const auto &component = connectedComponents_[componentIndex];
-    if (component.nodes.empty())
-    {
-        throw std::runtime_error("component is empty, can not select node");
-    }
-    return component.nodes[rng_.generateIndex(component.size())];
 }
 
 Node CNP_Graph::ageSelectNodeFromComponent(ComponentIndex componentIndex) const
@@ -869,7 +761,7 @@ int CNP_Graph::calculateConnectionGain(Node node, std::vector<size_t>& component
     return newConnections - oldConnectionsSum;
 }
 
-std::unique_ptr<CNP_Graph> CNP_Graph::getRandomFeasibleGraph(int seed) const
+std::unique_ptr<CNP_Graph> CNP_Graph::getRandomFullBudgetGraph(int seed) const
 {
     auto tempGraph = std::make_unique<CNP_Graph>(*this);
     RandomNumberGenerator rng;

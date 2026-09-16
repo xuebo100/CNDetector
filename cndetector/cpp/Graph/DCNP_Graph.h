@@ -250,8 +250,8 @@ public:
      */
     int getObjectiveValue() const;
 
-    // Generate a random feasible solution.
-    std::unique_ptr<DCNP_Graph> getRandomFeasibleGraph(int seed) const;
+    // Returns a copy in which numToRemove_ nodes have been removed at random.
+    std::unique_ptr<DCNP_Graph> getRandomFullBudgetGraph(int seed) const;
 
     // Generate a random partial solution with specified budget.
     std::unique_ptr<DCNP_Graph> getRandomPartialGraph(int partialBudget, int seed) const;

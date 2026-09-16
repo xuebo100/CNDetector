@@ -1,4 +1,4 @@
-"""Model entry point for building a graph and running the IRMS solver."""
+"""Model entry point for building a graph and running the CNDetector solver."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from .Result import Result
 from .constants import (
     CNP,
     DCNP,
+    DEFAULT_ALLOWABLE_IDLE_ITERATIONS,
     DEFAULT_INTERACTION_PERIOD,
     DEFAULT_POPULATION_SIZE,
     PACKAGE_LOGGER_NAME,
@@ -24,29 +25,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(PACKAGE_LOGGER_NAME)
 
-# DCNP-specific L2NS budget. DCNP's objective rebuilds K-hop trees on every
-# step, so a single L2NS run is far more expensive than in CNP. With the CNP
-# budget (xi = 1000, capped at 500 idle iterations) one local search takes tens
-# of seconds on 300+ node instances and the population never turns over. These
-# lighter caps keep each L2NS run cheap enough for the dual population to evolve
-# many generations within a few-minute budget. Tuned on USAir97 / Circuit /
-# Ecoli (100-500 node instances). Any field left out here keeps the CNP value.
+# DCNP-specific parameter set. Evaluating the DCNP objective rebuilds the b-hop
+# trees at every step, making one local search one to two orders of magnitude
+# more expensive than for CNP; with the CNP settings the two populations barely
+# get past initialization within the time limit. Applied only when the caller
+# left these knobs at the library defaults, so an explicit SolverParams value
+# always wins.
+_DCNP_POPULATION_SIZE = 4  # theta
+_DCNP_INTERACTION_PERIOD = 5  # beta
+_DCNP_ALLOWABLE_IDLE_ITERATIONS = 100  # gamma
 _DCNP_L2NS_DEFAULTS: dict[str, "int | float"] = {
-    "random_idle_product": 100,
-    "random_min_idle_steps": 20,
-    "random_max_idle_steps": 80,
-    "random_batch_max": 15,
-    "theta": 0.3,
+    # Destroy size sampled from [1, 15] and the per-run idle budget clipped to
+    # [20, 80].
+    "max_destroy_size": 15,
+    "idle_iteration_floor": 20,
+    "idle_iteration_cap": 80,
 }
-
-# DCNP-friendly dual-population defaults. DCNP's per-L2NS cost is high, so the
-# CNP population size and exchange interval (theta = 10, beta = 20) leave the
-# population barely past initialization within a time budget, and the
-# feasible<->infeasible exchange rarely fires. A smaller population turns over
-# faster and a short exchange interval lets the two populations actually mix.
-# Applied only when the caller left these at the library defaults.
-_DCNP_POPULATION_SIZE = 4
-_DCNP_INTERACTION_PERIOD = 5
 
 
 def _apply_l2ns_overrides(
@@ -54,11 +48,11 @@ def _apply_l2ns_overrides(
     params: SolverParams,
     dcnp_defaults: Optional[dict[str, "int | float"]] = None,
 ) -> None:
-    """Write the L2NS local-search budget into ``config.l2ns``.
+    """Write the local-search destroy/idle schedule into ``config.l2ns``.
 
     Priority: ``params.l2ns_*`` (explicitly set by the user) > ``dcnp_defaults``
-    (problem-specific) > native C++ defaults, which implement the local-search
-    budget of the paper.
+    (problem-specific) > native C++ defaults, which carry the tuned CNP
+    values.
 
     Args:
         config: native SolverConfig whose ``l2ns`` sub-config is mutated in place
@@ -68,12 +62,12 @@ def _apply_l2ns_overrides(
     """
     # l2ns field name -> the corresponding override attribute on params
     field_to_param = {
-        "max_idle_steps": "l2ns_max_idle_steps",
-        "theta": "l2ns_theta",
-        "random_batch_max": "l2ns_random_batch_max",
-        "random_idle_product": "l2ns_random_idle_product",
-        "random_min_idle_steps": "l2ns_random_min_idle_steps",
-        "random_max_idle_steps": "l2ns_random_max_idle_steps",
+        "min_destroy_size": "l2ns_min_destroy_size",
+        "max_destroy_size": "l2ns_max_destroy_size",
+        "idle_iteration_floor": "l2ns_idle_iteration_floor",
+        "idle_iteration_cap": "l2ns_idle_iteration_cap",
+        "impact_selection_rate": "l2ns_impact_selection_rate",
+        "adaptive_max_idle_iterations": "l2ns_adaptive_max_idle_iterations",
     }
     defaults = dcnp_defaults or {}
     for l2ns_field, param_attr in field_to_param.items():
@@ -84,13 +78,13 @@ def _apply_l2ns_overrides(
             setattr(config.l2ns, l2ns_field, defaults[l2ns_field])
 
 
-def _normalize_feasible_population(
-    feasible_population: list[tuple[set[int], int]],
+def _normalize_main_population(
+    main_population: list[tuple[set[int], int]],
 ) -> list[tuple[set[int], int]]:
-    """Normalize the feasible population so solutions and objectives share types.
+    """Normalize the main population so solutions and objectives share types.
 
     Args:
-        feasible_population: feasible population, each element a
+        main_population: main population P_m, each element a
             (solution set, objective value) tuple
 
     Returns:
@@ -100,7 +94,7 @@ def _normalize_feasible_population(
     # Coerce each solution to a set and each objective to an int for consistency.
     normalized = [
         (set(solution), int(obj_value))
-        for solution, obj_value in feasible_population
+        for solution, obj_value in main_population
     ]
     # Sort by objective value, solution size and contents so results are stable.
     normalized.sort(key=lambda item: (item[1], len(item[0]), tuple(sorted(item[0]))))
@@ -108,15 +102,15 @@ def _normalize_feasible_population(
 
 
 def _compute_overlap_ratio_matrix(
-    feasible_population: list[tuple[set[int], int]],
+    main_population: list[tuple[set[int], int]],
 ) -> list[list[float]]:
-    """Compute the pairwise overlap-ratio matrix of the feasible population.
+    """Compute the pairwise overlap-ratio matrix of the main population.
 
     The overlap ratio is the size of the intersection of two solutions divided
     by the size of the first solution.
 
     Args:
-        feasible_population: feasible population, each element a
+        main_population: main population P_m, each element a
             (solution set, objective value) tuple
 
     Returns:
@@ -124,10 +118,10 @@ def _compute_overlap_ratio_matrix(
         solution ``i`` against solution ``j``.
     """
     overlap_ratios: list[list[float]] = []
-    for solution, _ in feasible_population:
+    for solution, _ in main_population:
         denominator = len(solution)
         row: list[float] = []
-        for other_solution, _ in feasible_population:
+        for other_solution, _ in main_population:
             if denominator == 0:
                 # An empty solution has an overlap ratio of 0.
                 row.append(0.0)
@@ -383,8 +377,8 @@ class Model:
         collect_stats: bool,
         max_runtime: Optional[float],
     ) -> Result:
-        """Run one IRMS search at a fixed budget, minimizing pairwise
-        connectivity (CNP1).
+        """Run one CNDetector search at a fixed budget, minimizing the residual
+        pairwise connectivity of the graph.
 
         When ``max_runtime`` (seconds) is positive it is pushed to the native
         solver as a hard wall-clock deadline, so it can stop during population
@@ -418,9 +412,12 @@ class Model:
         config.interaction_period = params.interaction_period
         config.seed = seed
         config.relaxation_coefficient = params.relaxation_coefficient
-        config.beta = params.beta
+        config.backbone_rate = params.backbone_rate
         config.display_interval = effective_display_interval
         config.search = params.search
+        # gamma, and then the finer L2NS schedule overrides.
+        config.l2ns.allowable_idle_iterations = params.allowable_idle_iterations
+        _apply_l2ns_overrides(config, params)
         if isinstance(max_runtime, (int, float)) and max_runtime > 0:
             config.max_runtime = float(max_runtime)
 
@@ -441,18 +438,19 @@ class Model:
         display: bool,
         collect_stats: bool,
     ) -> Result:
-        """Solve fixed-budget DCNP with the same dual-population IRMS flow as CNP.
+        """Solve fixed-budget DCNP with the same search framework as CNP.
 
         The objective is the number of unordered node pairs at distance at most
         ``distance`` in the graph after removing ``budget`` nodes; lower is
         better.
 
-        The process is identical to CNP: maintain a feasible (budget ``k``) and
-        an infeasible (partial budget ``floor(k * (1 - alpha))``) population, each
-        generation producing offspring via RSC crossover plus L2NS local search
-        and pruning the population by cost + diversity ranking; every
-        ``interaction_period`` generations the best infeasible solution is
-        completed to the full budget and injected into the feasible population.
+        The flow is the same as for CNP: a main population of solutions with
+        ``budget`` nodes and an auxiliary population of solutions with
+        ``floor(k * (1 - alpha))`` nodes, each generation producing offspring
+        via the crossover plus local search and updating the population by
+        quality and diversity; every ``interaction_period`` generations the best
+        auxiliary solution is completed to the full budget and offered to the
+        main population. Only the parameter values differ.
         """
         from ._cndetector import SolverConfig
 
@@ -461,11 +459,8 @@ class Model:
             budget, distance, seed
         )
 
-        # A single L2NS run is expensive for DCNP; the CNP population size and
-        # exchange interval leave the population barely past initialization
-        # within a time budget and the exchange rarely fires. If the caller left
-        # these at the library defaults, replace them with a small population
-        # and a short exchange interval better suited to DCNP.
+        # Switch to the DCNP parameter set wherever the caller left the knob at
+        # its CNP default.
         dcnp_population_size = (
             _DCNP_POPULATION_SIZE
             if params.population_size == DEFAULT_POPULATION_SIZE
@@ -476,6 +471,11 @@ class Model:
             if params.interaction_period == DEFAULT_INTERACTION_PERIOD
             else params.interaction_period
         )
+        dcnp_allowable_idle_iterations = (
+            _DCNP_ALLOWABLE_IDLE_ITERATIONS
+            if params.allowable_idle_iterations == DEFAULT_ALLOWABLE_IDLE_ITERATIONS
+            else params.allowable_idle_iterations
+        )
 
         # Configure the solver (same as the CNP path).
         config = SolverConfig()
@@ -485,11 +485,13 @@ class Model:
         config.interaction_period = dcnp_interaction_period
         config.seed = seed
         config.relaxation_coefficient = params.relaxation_coefficient
-        config.beta = params.beta
+        config.backbone_rate = params.backbone_rate
         config.display_interval = effective_display_interval
         config.search = params.search
 
-        # Lighter L2NS budget for DCNP; explicit params.l2ns_* still override it.
+        # gamma, then the lighter local-search schedule; explicit
+        # params.l2ns_* values still take precedence.
+        config.l2ns.allowable_idle_iterations = dcnp_allowable_idle_iterations
         _apply_l2ns_overrides(config, params, dcnp_defaults=_DCNP_L2NS_DEFAULTS)
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
@@ -513,7 +515,7 @@ class Model:
         collect_stats: bool,
         dcnp: bool = False,
     ) -> Result:
-        """Run the dual-population solver (shared by CNP and DCNP).
+        """Drive the search generation by generation (shared by CNP and DCNP).
 
         Args:
             original_graph: the original graph object (CNP_Graph or DCNP_Graph)
@@ -545,17 +547,17 @@ class Model:
         if hasattr(stopping_criterion, "start_time"):
             stopping_criterion.start_time = start_time
 
-        # The infeasible solution removes fewer nodes than the budget allows,
-        # capped at budget-1 so it stays strictly infeasible (and >=1 so the
-        # population has something to evolve). When budget=1 we fall back to 1,
-        # which equals the feasible budget.
-        infeasible_budget = max(1, min(
+        # The auxiliary population holds solutions of floor(k * (1 - alpha))
+        # nodes, capped at k-1 so it stays strictly smaller than the main one
+        # (and >= 1 so the population has something to evolve). When k = 1 it
+        # falls back to 1, which equals the main budget.
+        auxiliary_budget = max(1, min(
             math.floor(budget * (1.0 - config.relaxation_coefficient)),
             budget - 1,
         ))
 
         population = population_cls(
-            original_graph, budget, infeasible_budget, config,
+            original_graph, budget, auxiliary_budget, config,
         )
 
         printer = ProgressPrinter(
@@ -577,20 +579,19 @@ class Model:
         idle_generations = 0
         stats: list[dict] = []
 
-        # Main solve loop.
         while not stopping_criterion(best_obj_value):
             population.advance_one_generation()
             iterations += 1
 
-            # Handle exchange events.
-            for event in population.drain_exchange_events():
+            # Handle HPC events.
+            for event in population.drain_hpc_events():
                 report = event.report
-                printer.exchange(event.iteration, {
-                    "exchange_triggered": report.exchange_triggered,
-                    "first_population_candidate_obj":
-                        report.first_population_candidate_obj,
-                    "first_population_improved_best":
-                        report.first_population_improved_best,
+                printer.hpc(event.iteration, {
+                    "hpc_triggered": report.hpc_triggered,
+                    "candidate_obj_value":
+                        report.candidate_obj_value,
+                    "improved_main_best":
+                        report.improved_main_best,
                 })
 
             # Handle iteration events.
@@ -618,17 +619,17 @@ class Model:
                 )
 
         # Fetch the final solution.
-        final_sol, final_obj = population.get_best_feasible_solution()
+        final_sol, final_obj = population.get_best_solution()
         best_solution = set(final_sol)
         best_obj_value = min(best_obj_value, final_obj)
         runtime = time.perf_counter() - start_time
 
-        # Normalize the feasible population.
-        raw_pop = population.get_feasible_population()
-        feasible_population = _normalize_feasible_population(
+        # Normalize the main population P_m.
+        raw_pop = population.get_main_population()
+        main_population = _normalize_main_population(
             [(set(s), v) for s, v in raw_pop]
         )
-        overlap_ratios = _compute_overlap_ratio_matrix(feasible_population)
+        overlap_ratios = _compute_overlap_ratio_matrix(main_population)
 
         result = Result(
             best_solution=best_solution,
@@ -637,8 +638,8 @@ class Model:
             runtime=runtime,
             best_found_at_time=best_found_at_time,
             stats=stats if collect_stats else None,
-            feasible_population=feasible_population,
-            feasible_population_overlap_ratios=overlap_ratios,
+            main_population=main_population,
+            main_population_overlap_ratios=overlap_ratios,
         )
 
         printer.end(result)

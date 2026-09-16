@@ -187,8 +187,8 @@ void DCNP_Graph::buildTree()
     // are written only by the worker owning index v, and the running total is
     // re-derived afterwards in a fixed order, so the result is identical for
     // any thread count.
-    auto &workers = ensureScratch(pdms::maxThreads());
-    pdms::parallelFor(0, numNodes_,
+    auto &workers = ensureScratch(cndetector::maxThreads());
+    cndetector::parallelFor(0, numNodes_,
                       [&](int v, int workerIdx)
                       { computeTree(v, workers[workerIdx]); });
 
@@ -273,7 +273,7 @@ int DCNP_Graph::calculateKhopTreeSize() const
     return static_cast<int>(totalTreeSize_ / 2);
 }
 
-std::unique_ptr<DCNP_Graph> DCNP_Graph::getRandomFeasibleGraph(int seed) const
+std::unique_ptr<DCNP_Graph> DCNP_Graph::getRandomFullBudgetGraph(int seed) const
 {
     auto tempGraph = std::make_unique<DCNP_Graph>(*this);
     RandomNumberGenerator rng;
@@ -334,8 +334,8 @@ Node DCNP_Graph::findBestNodeToRemove()
     constexpr long long kSkipped = std::numeric_limits<long long>::min();
     std::vector<long long> deltas(static_cast<size_t>(numNodes_), kSkipped);
 
-    auto &workers = ensureScratch(pdms::maxThreads());
-    pdms::parallelFor(0, numNodes_,
+    auto &workers = ensureScratch(cndetector::maxThreads());
+    cndetector::parallelFor(0, numNodes_,
                       [&](int i, int workerIdx)
                       {
                           if (removedFlag_[i])
@@ -394,8 +394,8 @@ Node DCNP_Graph::findBestNodeToAdd()
                                        removedNodes_.end());
     std::vector<long long> deltas(candidates.size(), 0);
 
-    auto &workers = ensureScratch(pdms::maxThreads());
-    pdms::parallelFor(0, static_cast<int>(candidates.size()),
+    auto &workers = ensureScratch(cndetector::maxThreads());
+    cndetector::parallelFor(0, static_cast<int>(candidates.size()),
                       [&](int k, int workerIdx)
                       {
                           const Node node = candidates[k];

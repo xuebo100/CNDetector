@@ -12,8 +12,10 @@
 </div>
 
 CNDetector finds the set of vertices whose removal most fragments a graph, using
-**IRMS** (*Iterative Ruin and Memetic Search*) — a population-based memetic
-metaheuristic implemented in C++ and exposed through pybind11.
+a **parallel co-evolutionary memetic search** — two complementary populations
+evolved in parallel by an RSC crossover, an LCC-oriented large neighbourhood
+search (L2NS) and periodic heterogeneous population cooperation, implemented in
+C++ and exposed through pybind11.
 
 Given a graph and a budget `k`, the **Critical Node Problem (CNP)** asks which
 `k` vertices to remove to minimize the residual pairwise connectivity — the sum
@@ -98,7 +100,7 @@ print(f"Removed nodes:    {sorted(result.best_solution)}")
 ```
 
 DCNP runs the same dual-population search as CNP. Its objective rebuilds a
-K-hop tree on every step, so a single local search is far more expensive, and
+b-hop tree on every step, so a single local search is far more expensive, and
 CNDetector therefore applies a lighter parameter set automatically — see
 [Tuning DCNP](#tuning-dcnp).
 
@@ -133,37 +135,44 @@ Any `Callable[[float], bool]` works, so you can supply your own.
 from cndetector import SolverParams
 
 params = SolverParams(
-    population_size=10,           # theta: size of each population
-    thread_count=2,               # kappa: threads, and offspring per generation
-    interaction_period=20,        # beta: generations between population exchanges
-    relaxation_coefficient=0.05,  # alpha: auxiliary budget = floor(k * (1 - alpha))
-    stagnation_threshold=500,     # delta: idle generations before reconstruction
-    search="L2NS",                # local-search strategy
+    population_size=10,             # theta: size of each population
+    thread_count=2,                 # kappa: threads, and offspring per generation
+    interaction_period=20,          # beta: generations between two HPC calls
+    relaxation_coefficient=0.05,    # alpha: auxiliary budget = floor(k * (1 - alpha))
+    allowable_idle_iterations=1000, # gamma: idle-iteration budget of one L2NS run
+    stagnation_threshold=500,       # delta: idle generations before reconstruction
+    search="L2NS",                  # local-search strategy
 )
 ```
 
-The defaults are the tuned values used in the paper: `theta = 10`,
-`kappa = 2`, `beta = 20`, `alpha = 0.05`, `xi = 1000`, `delta = 500`. The same
-set applies to both CNP and DCNP.
+These defaults are the irace-tuned values reported in the paper: `theta = 10`,
+`kappa = 2`, `beta = 20`, `alpha = 0.05`, `gamma = 1000`, `delta = 500`. DCNP
+overrides some of them automatically — see [Tuning DCNP](#tuning-dcnp).
+
+Each L2NS run draws a destroy size `lambda` from `[1, 50]` and stops after
+`min(500, gamma / lambda)` idle iterations. The `l2ns_*` fields override that
+schedule directly: `l2ns_min_destroy_size`, `l2ns_max_destroy_size`,
+`l2ns_idle_iteration_floor`, `l2ns_idle_iteration_cap` and
+`l2ns_impact_selection_rate`. `backbone_rate` is the probability that the RSC
+crossover keeps a node of the backbone shared by the two parents.
 
 `search` accepts `"L2NS"` (the default), `"L2NS-ADAPT"`, or `"L2NS<N>"` for a
-fixed destroy size (e.g. `"L2NS5"`). The `l2ns_*` fields override the
-local-search budget: `l2ns_random_idle_product` is the allowable idle iteration
-count `xi`, and each L2NS run draws a destroy size `lambda` from `[1, 50]` and
-stops after `min(500, xi / lambda)` idle iterations.
+fixed destroy size (e.g. `"L2NS5"`). The latter two replace the random destroy
+size with a schedule that grows it as the search stalls.
 
 ### Parallelism
 
-`thread_count` (`kappa`) sets the number of worker threads, and Algorithm 2
-generates one offspring per thread. Parallelism affects wall-clock time only:
-for a fixed iteration budget the solver returns bit-identical solutions for any
-thread count. `set_max_threads` / `get_max_threads` expose the cap directly.
+`thread_count` (`kappa`) sets the number of worker threads, and each thread
+contributes exactly one offspring per population per generation. Parallelism
+affects wall-clock time only: for a fixed iteration budget the solver returns
+bit-identical solutions for any thread count. `set_max_threads` /
+`get_max_threads` expose the cap directly.
 
 ### `Result`
 
 `Model.solve` returns a `Result` with `best_solution`, `best_obj_value`,
 `num_iterations`, `runtime`, `best_found_at_time`, an optional per-iteration
-`stats` list, and the final `feasible_population`.
+`stats` list, and the final main population `main_population`.
 
 ## Tuning DCNP
 
@@ -176,13 +185,13 @@ when you leave these knobs at the library defaults**:
 |------|-------------|--------------|
 | `population_size` (theta) | 10 | **4** |
 | `interaction_period` (beta) | 20 | **5** |
-| `l2ns_random_idle_product` (xi) | 1000 | **100** |
-| `l2ns_random_min_idle_steps` | 1 | **20** |
-| `l2ns_random_max_idle_steps` | 500 | **80** |
-| `l2ns_random_batch_max` | 50 | **15** |
+| `allowable_idle_iterations` (gamma) | 1000 | **100** |
+| `l2ns_max_destroy_size` | 50 | **15** |
+| `l2ns_idle_iteration_floor` | 1 | **20** |
+| `l2ns_idle_iteration_cap` | 500 | **80** |
 
-Passing an explicit value (or any `l2ns_*` field) overrides it. These values
-were tuned on the 100–500 node instances USAir97, Circuit and Ecoli.
+Passing an explicit value overrides it. These values were tuned on the 100–500
+node instances USAir97, Circuit and Ecoli.
 
 ## Development
 

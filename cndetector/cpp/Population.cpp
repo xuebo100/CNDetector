@@ -23,13 +23,13 @@ double DualPopulationT<GraphT>::computeSimilarity(const Solution &lhs, const Sol
 template <typename GraphT>
 DualPopulationT<GraphT>::DualPopulationT(
     const GraphT &originalGraph,
-    int feasibleBudget,
-    int infeasibleBudget,
+    int mainBudget,
+    int auxiliaryBudget,
     SolverConfig config,
     std::chrono::steady_clock::time_point startTime)
     : originalGraph_(originalGraph),
-      feasibleBudget_(feasibleBudget),
-      infeasibleBudget_(infeasibleBudget),
+      mainBudget_(mainBudget),
+      auxiliaryBudget_(auxiliaryBudget),
       config_(std::move(config)),
       startTime_(startTime)
 {
@@ -50,74 +50,113 @@ bool DualPopulationT<GraphT>::reachedDeadline() const
 template <typename GraphT>
 std::pair<Solution, int> DualPopulationT<GraphT>::initialize()
 {
-    feasiblePopulation_.clear();
-    infeasiblePopulation_.clear();
+    mainPopulation_.clear();
+    auxiliaryPopulation_.clear();
     nextItemId_ = 0;
-    feasibleIterationCount_ = 0;
-    infeasibleIterationCount_ = 0;
-    feasibleSelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF001u));
-    infeasibleSelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF002u));
+    mainGenerationCount_ = 0;
+    auxiliaryGenerationCount_ = 0;
+    mainSelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF001u));
+    auxiliarySelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF002u));
 
     iterationEvents_.clear();
-    exchangeEvents_.clear();
+    hpcEvents_.clear();
 
-    // Population members are independent local-search runs with fixed
-    // per-member seeds, so they are generated in parallel and appended in a
-    // fixed order afterwards. The first (feasible) member always runs so the
-    // population is never empty; later members are skipped once the time
-    // budget is exhausted, mirroring the sequential early-break.
+    // Members are independent local-search runs with fixed per-member
+    // seeds, so one round generates the missing members of both populations in
+    // a single parallel region and appends them in a fixed order afterwards.
+    // A member is admitted only if it is distinct from the members already in
+    // its population, and rounds are repeated until both populations hold
+    // theta distinct individuals. The retry budget bounds the loop on graphs
+    // too small to admit theta distinct local optima. The member-0 solutions
+    // always run so neither population is ever left empty; later members are
+    // skipped once the time budget is exhausted.
     struct InitJob
     {
         int budget;
         int seed;
+        bool isMain;
     };
-    std::vector<InitJob> jobs;
-    jobs.reserve(static_cast<size_t>(config_.populationSize) * 2);
-    for (int i = 0; i < config_.populationSize; ++i)
-    {
-        jobs.push_back({feasibleBudget_,
-                        deterministicSeed(config_.seed, 0x1001u, 0,
-                                          static_cast<uint64_t>(i))});
-        jobs.push_back({infeasibleBudget_,
-                        deterministicSeed(config_.seed, 0x1002u, 0,
-                                          static_cast<uint64_t>(i))});
-    }
 
-    std::vector<std::optional<std::pair<Solution, int>>> results(jobs.size());
-    pdms::parallelFor(0, static_cast<int>(jobs.size()),
-                      [&](int k, int /*workerIdx*/)
-                      {
-                          // Both member-0 solutions always run (matching the
-                          // sequential per-member deadline check), so neither
-                          // population is ever left empty.
-                          if (k > 1 && reachedDeadline())
-                          {
-                              return;
-                          }
-                          results[k] = generateRandomSolution(jobs[k].budget,
-                                                              jobs[k].seed);
-                      });
-
-    for (size_t k = 0; k < jobs.size(); ++k)
+    const size_t targetSize = static_cast<size_t>(config_.populationSize);
+    const int maxRounds = config_.populationSize + 1;
+    for (int round = 0; round < maxRounds; ++round)
     {
-        if (!results[k].has_value())
+        std::vector<InitJob> jobs;
+        size_t numMainJobs = 0;
+        for (size_t i = mainPopulation_.size(); i < targetSize; ++i)
         {
-            continue;
+            ++numMainJobs;
+            jobs.push_back({mainBudget_,
+                            deterministicSeed(config_.seed, 0x1001u,
+                                              static_cast<uint64_t>(round),
+                                              static_cast<uint64_t>(i)),
+                            true});
         }
-        auto &population
-            = k % 2 == 0 ? feasiblePopulation_ : infeasiblePopulation_;
-        addSolution(population, results[k]->first, results[k]->second);
+        for (size_t i = auxiliaryPopulation_.size(); i < targetSize; ++i)
+        {
+            jobs.push_back({auxiliaryBudget_,
+                            deterministicSeed(config_.seed, 0x1002u,
+                                              static_cast<uint64_t>(round),
+                                              static_cast<uint64_t>(i)),
+                            false});
+        }
+        if (jobs.empty())
+        {
+            break;
+        }
+
+        // In the first round the leading job of each population must run even
+        // past the deadline, so neither population is left empty.
+        const int firstMainJob = round == 0 && numMainJobs > 0 ? 0 : -1;
+        const int firstAuxiliaryJob = round == 0 && jobs.size() > numMainJobs
+            ? static_cast<int>(numMainJobs)
+            : -1;
+
+        std::vector<std::optional<std::pair<Solution, int>>> results(jobs.size());
+        cndetector::parallelFor(0, static_cast<int>(jobs.size()),
+                          [&](int k, int /*workerIdx*/)
+                          {
+                              if (k != firstMainJob && k != firstAuxiliaryJob
+                                  && reachedDeadline())
+                              {
+                                  return;
+                              }
+                              results[k] = generatePPIIndividual(jobs[k].budget,
+                                                                  jobs[k].seed);
+                          });
+
+        for (size_t k = 0; k < jobs.size(); ++k)
+        {
+            if (!results[k].has_value())
+            {
+                continue;
+            }
+            auto &population
+                = jobs[k].isMain ? mainPopulation_ : auxiliaryPopulation_;
+            if (population.size() >= targetSize
+                || isDuplicate(results[k]->first, population))
+            {
+                continue;
+            }
+            addSolution(population, results[k]->first, results[k]->second);
+        }
+
+        if (reachedDeadline())
+        {
+            break;
+        }
     }
 
-    const auto &bestItem = getBestItem(feasiblePopulation_);
+    // Best solution of the main population.
+    const auto &bestItem = getBestItem(mainPopulation_);
     return {*bestItem.solution, bestItem.objValue};
 }
 
 template <typename GraphT>
 void DualPopulationT<GraphT>::advanceOneGeneration()
 {
-    const int feasibleIteration = feasibleIterationCount_ + 1;
-    const int infeasibleIteration = infeasibleIterationCount_ + 1;
+    const int mainGeneration = mainGenerationCount_ + 1;
+    const int auxiliaryGeneration = auxiliaryGenerationCount_ + 1;
 
     // Collect the generation's offspring jobs for both populations (parent
     // selection stays sequential so the RNG streams match the serial order),
@@ -126,31 +165,40 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
     std::vector<OffspringJob> jobs;
     jobs.reserve(static_cast<size_t>(config_.threadCount) * 2);
     collectOffspringJobs(
-        PopulationKind::Feasible, feasibleIteration, feasibleSelectionRng_, jobs);
+        PopulationKind::Main, mainGeneration, mainSelectionRng_, jobs);
     collectOffspringJobs(
-        PopulationKind::Infeasible, infeasibleIteration, infeasibleSelectionRng_, jobs);
+        PopulationKind::Auxiliary, auxiliaryGeneration, auxiliarySelectionRng_, jobs);
 
     std::vector<std::pair<Solution, int>> results(jobs.size());
-    pdms::parallelFor(0, static_cast<int>(jobs.size()),
+    cndetector::parallelFor(0, static_cast<int>(jobs.size()),
                       [&](int k, int /*workerIdx*/)
                       {
                           results[k] = createOffspring(
                               jobs[k].parents, jobs[k].targetBudget, jobs[k].seed);
                       });
 
-    // PMS (Algorithm 2, lines 8-9): the offspring of a generation form a
-    // temporary population P', from which only the single best solution
-    // S* = argmin f(S_i) is passed to the population update. Ties keep the
-    // earliest job so the outcome stays independent of the thread schedule.
-    applyBestOffspring(feasiblePopulation_, PopulationKind::Feasible, jobs, results);
-    applyBestOffspring(infeasiblePopulation_, PopulationKind::Infeasible, jobs, results);
+    // The offspring of a generation form a temporary pool from which only the
+    // single cheapest solution is passed to the population update. Ties keep
+    // the earliest job so the outcome stays independent of the thread
+    // schedule.
+    applyBestOffspring(mainPopulation_, PopulationKind::Main, jobs, results);
+    applyBestOffspring(auxiliaryPopulation_, PopulationKind::Auxiliary, jobs, results);
 
-    feasibleIterationCount_ = feasibleIteration;
-    infeasibleIterationCount_ = infeasibleIteration;
+    mainGenerationCount_ = mainGeneration;
+    auxiliaryGenerationCount_ = auxiliaryGeneration;
 
-    // Algorithm 1, lines 10-15: track I'_g, the number of consecutive
-    // generations in which the incumbent did not improve.
-    const int generationBest = getBestItem(feasiblePopulation_).objValue;
+    // The two populations cooperate every interactionPeriod generations, using
+    // the idle-generation count accumulated by the preceding generations.
+    if (mainGeneration % config_.interactionPeriod == 0 && !reachedDeadline())
+    {
+        hpcEvents_.push_back(
+            HPCEvent{mainGeneration, runHPC(mainGeneration)});
+    }
+
+    // Refresh the incumbent and the count of consecutive generations without
+    // improvement. Runs after the cooperation step so a solution injected by
+    // it counts for this generation.
+    const int generationBest = getBestItem(mainPopulation_).objValue;
     if (generationBest < bestObjective_)
     {
         bestObjective_ = generationBest;
@@ -161,13 +209,7 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
         ++idleGenerations_;
     }
 
-    if (feasibleIteration % config_.interactionPeriod == 0 && !reachedDeadline())
-    {
-        exchangeEvents_.push_back(
-            ExchangeEvent{feasibleIteration, performExchange(feasibleIteration)});
-    }
-
-    iterationEvents_.push_back(buildFeasibleIterationEvent(feasibleIteration));
+    iterationEvents_.push_back(buildIterationEvent(mainGeneration));
 }
 
 template <typename GraphT>
@@ -192,7 +234,7 @@ void DualPopulationT<GraphT>::applyBestOffspring(
 
     if (best != nullptr)
     {
-        updatePopulation(population, best->first, best->second,
+        applyQDPU(population, best->first, best->second,
                          static_cast<size_t>(config_.populationSize));
     }
 }
@@ -205,10 +247,10 @@ void DualPopulationT<GraphT>::collectOffspringJobs(
     std::vector<OffspringJob> &jobs)
 {
     PopulationItems &population
-        = kind == PopulationKind::Feasible ? feasiblePopulation_ : infeasiblePopulation_;
+        = kind == PopulationKind::Main ? mainPopulation_ : auxiliaryPopulation_;
     const std::optional<int> targetBudget
-        = kind == PopulationKind::Feasible ? std::nullopt
-                                           : std::optional<int>(infeasibleBudget_);
+        = kind == PopulationKind::Main ? std::nullopt
+                                           : std::optional<int>(auxiliaryBudget_);
 
     for (int i = 0; i < config_.threadCount; ++i)
     {
@@ -216,7 +258,7 @@ void DualPopulationT<GraphT>::collectOffspringJobs(
         {
             break;
         }
-        const uint64_t streamId = kind == PopulationKind::Feasible ? 0x2001u : 0x2002u;
+        const uint64_t streamId = kind == PopulationKind::Main ? 0x2001u : 0x2002u;
         const int offspringSeed = deterministicSeed(
             config_.seed, streamId,
             static_cast<uint64_t>(iteration), static_cast<uint64_t>(i));
@@ -227,79 +269,82 @@ void DualPopulationT<GraphT>::collectOffspringJobs(
 }
 
 template <typename GraphT>
-ExchangeReport DualPopulationT<GraphT>::performExchange(int iteration)
+HPCReport DualPopulationT<GraphT>::runHPC(int iteration)
 {
-    ExchangeReport report;
-    report.exchangeTriggered = true;
-    const Solution bestInfeasible = *getBestItem(infeasiblePopulation_).solution;
+    HPCReport report;
+    report.hpcTriggered = true;
+    const Solution bestAuxiliary = *getBestItem(auxiliaryPopulation_).solution;
 
     const int completionSeed = deterministicSeed(
         config_.seed, 0x3001u, static_cast<uint64_t>(iteration));
     const auto [completedSolution, completedObjValue]
-        = completeSolutionToTargetBudget(bestInfeasible, feasibleBudget_, completionSeed);
-    report.firstPopulationCandidateObj = completedObjValue;
+        = completePartialSolution(bestAuxiliary, mainBudget_, completionSeed);
+    report.candidateObjValue = completedObjValue;
 
-    const int bestBefore = getBestItem(feasiblePopulation_).objValue;
-    updatePopulation(feasiblePopulation_, completedSolution, completedObjValue,
+    const int bestBefore = getBestItem(mainPopulation_).objValue;
+    applyQDPU(mainPopulation_, completedSolution, completedObjValue,
                      static_cast<size_t>(config_.populationSize));
-    report.firstPopulationImprovedBest
-        = getBestItem(feasiblePopulation_).objValue < bestBefore;
+    report.improvedMainBest
+        = getBestItem(mainPopulation_).objValue < bestBefore;
 
-    // Algorithm 4, lines 8-11: once the search has stagnated for more than
-    // delta generations, rebuild the auxiliary population and reset I'_g.
+    // Once the search has stagnated for more than stagnationThreshold
+    // generations, rebuild the auxiliary population and reset the counter.
     if (idleGenerations_ > config_.stagnationThreshold)
     {
-        reconstructAuxiliaryPopulation(iteration);
+        runPR(iteration);
         idleGenerations_ = 0;
     }
     return report;
 }
 
 template <typename GraphT>
-void DualPopulationT<GraphT>::reconstructAuxiliaryPopulation(int iteration)
+void DualPopulationT<GraphT>::runPR(int iteration)
 {
-    // Section 4.4: keep the incumbent of P_a and replace the remaining
-    // theta - 1 individuals with fresh solutions built by the PPI procedure.
-    const PopulationItem &incumbent = getBestItem(infeasiblePopulation_);
+    // Keep the incumbent of the auxiliary population and replace the remaining
+    // populationSize - 1 individuals with freshly initialized solutions.
+    const PopulationItem &incumbent = getBestItem(auxiliaryPopulation_);
     const Solution keptSolution = *incumbent.solution;
     const int keptObjValue = incumbent.objValue;
 
     const int replacements = std::max(0, config_.populationSize - 1);
     std::vector<std::optional<std::pair<Solution, int>>> results(
         static_cast<size_t>(replacements));
-    pdms::parallelFor(0, replacements,
+    cndetector::parallelFor(0, replacements,
                       [&](int k, int /*workerIdx*/)
                       {
                           if (reachedDeadline())
                           {
                               return;
                           }
-                          results[static_cast<size_t>(k)] = generateRandomSolution(
-                              infeasibleBudget_,
+                          results[static_cast<size_t>(k)] = generatePPIIndividual(
+                              auxiliaryBudget_,
                               deterministicSeed(config_.seed, 0x4001u,
                                                 static_cast<uint64_t>(iteration),
                                                 static_cast<uint64_t>(k)));
                       });
 
-    infeasiblePopulation_.clear();
-    addSolution(infeasiblePopulation_, keptSolution, keptObjValue);
+    auxiliaryPopulation_.clear();
+    addSolution(auxiliaryPopulation_, keptSolution, keptObjValue);
     for (const auto &result : results)
     {
-        if (result.has_value())
+        // As in PPI, a fresh individual joins P_a only if it is distinct from
+        // the individuals already there.
+        if (result.has_value()
+            && !isDuplicate(result->first, auxiliaryPopulation_))
         {
-            addSolution(infeasiblePopulation_, result->first, result->second);
+            addSolution(auxiliaryPopulation_, result->first, result->second);
         }
     }
 }
 
 template <typename GraphT>
-IterationEvent DualPopulationT<GraphT>::buildFeasibleIterationEvent(int iteration) const
+IterationEvent DualPopulationT<GraphT>::buildIterationEvent(int iteration) const
 {
     return {
         iteration,
         elapsedSeconds(),
-        getBestItem(feasiblePopulation_).objValue,
-        static_cast<int>(feasiblePopulation_.size()),
+        getBestItem(mainPopulation_).objValue,
+        static_cast<int>(mainPopulation_.size()),
     };
 }
 
@@ -312,12 +357,12 @@ double DualPopulationT<GraphT>::elapsedSeconds() const
 }
 
 template <typename GraphT>
-std::pair<Solution, int> DualPopulationT<GraphT>::generateRandomSolution(int budget, int seed) const
+std::pair<Solution, int> DualPopulationT<GraphT>::generatePPIIndividual(int budget, int seed) const
 {
     std::unique_ptr<GraphT> graph;
-    if (budget == feasibleBudget_)
+    if (budget == mainBudget_)
     {
-        graph = originalGraph_.getRandomFeasibleGraph(deterministicSeed(seed, 0x4001u));
+        graph = originalGraph_.getRandomFullBudgetGraph(deterministicSeed(seed, 0x4001u));
     }
     else
     {
@@ -337,14 +382,14 @@ std::pair<Solution, int> DualPopulationT<GraphT>::createOffspring(
     auto parentPtrs = std::pair<const Solution *, const Solution *>(
         parents.first.get(), parents.second.get());
     auto offspringGraph = reduceSolveCombine(
-        originalGraph_, parentPtrs, config_.beta, targetBudget, seed, config_, deadline_);
+        originalGraph_, parentPtrs, config_.backboneRate, targetBudget, seed, config_, deadline_);
     const LocalSearchResult result
         = runLocalSearch(*offspringGraph, seed + 10000, config_.resolvedL2ns, deadline_);
     return {result.solution, result.objValue};
 }
 
 template <typename GraphT>
-std::pair<Solution, int> DualPopulationT<GraphT>::completeSolutionToTargetBudget(
+std::pair<Solution, int> DualPopulationT<GraphT>::completePartialSolution(
     const Solution &baseSolution, int targetBudget, int seed) const
 {
     if (static_cast<int>(baseSolution.size()) > targetBudget)
@@ -360,9 +405,9 @@ std::pair<Solution, int> DualPopulationT<GraphT>::completeSolutionToTargetBudget
     {
         reducedGraph = std::move(workingGraph);
     }
-    else if (targetBudget == feasibleBudget_)
+    else if (targetBudget == mainBudget_)
     {
-        reducedGraph = workingGraph->getRandomFeasibleGraph(deterministicSeed(seed, 0x6001u));
+        reducedGraph = workingGraph->getRandomFullBudgetGraph(deterministicSeed(seed, 0x6001u));
     }
     else
     {
@@ -391,6 +436,18 @@ const PopulationItem &DualPopulationT<GraphT>::getBestItem(const PopulationItems
         throw std::runtime_error("Population is empty");
     }
     return *std::min_element(population.begin(), population.end(),
+        [](const auto &lhs, const auto &rhs) { return lhs.objValue < rhs.objValue; });
+}
+
+template <typename GraphT>
+const PopulationItem &DualPopulationT<GraphT>::getWorstItem(
+    const PopulationItems &population) const
+{
+    if (population.empty())
+    {
+        throw std::runtime_error("Population is empty");
+    }
+    return *std::max_element(population.begin(), population.end(),
         [](const auto &lhs, const auto &rhs) { return lhs.objValue < rhs.objValue; });
 }
 
@@ -474,7 +531,8 @@ void DualPopulationT<GraphT>::updateFitness(PopulationItems &population) const
     const auto diversityRanks = calculateRanks(diversity);
     for (size_t i = 0; i < population.size(); ++i)
     {
-        population[i].fitness = ALPHA * costRanks[i] + (1.0 - ALPHA) * diversityRanks[i];
+        population[i].fitness = QUALITY_WEIGHT * costRanks[i]
+            + (1.0 - QUALITY_WEIGHT) * diversityRanks[i];
     }
 }
 
@@ -502,12 +560,25 @@ void DualPopulationT<GraphT>::removeWorstSolution(PopulationItems &population) c
 }
 
 template <typename GraphT>
-void DualPopulationT<GraphT>::updatePopulation(
+void DualPopulationT<GraphT>::applyQDPU(
     PopulationItems &population,
     const Solution &solution,
     int objValue,
     size_t maxPopulationSize)
 {
+    // Once the population is full, the offspring is discarded
+    // when it duplicates an existing individual or when its cost is no better
+    // than the cost of the current worst individual; otherwise it is admitted
+    // in place of the individual with the worst quality-diversity fitness.
+    if (population.size() >= maxPopulationSize && !population.empty())
+    {
+        if (isDuplicate(solution, population)
+            || objValue >= getWorstItem(population).objValue)
+        {
+            return;
+        }
+    }
+
     addSolution(population, solution, objValue);
     if (population.size() > maxPopulationSize)
     {
@@ -541,26 +612,26 @@ std::vector<IterationEvent> DualPopulationT<GraphT>::drainIterationEvents()
 }
 
 template <typename GraphT>
-std::vector<ExchangeEvent> DualPopulationT<GraphT>::drainExchangeEvents()
+std::vector<HPCEvent> DualPopulationT<GraphT>::drainHPCEvents()
 {
-    std::vector<ExchangeEvent> drained;
-    drained.swap(exchangeEvents_);
+    std::vector<HPCEvent> drained;
+    drained.swap(hpcEvents_);
     return drained;
 }
 
 template <typename GraphT>
-std::pair<Solution, int> DualPopulationT<GraphT>::getBestFeasibleSolution() const
+std::pair<Solution, int> DualPopulationT<GraphT>::getBestSolution() const
 {
-    const auto &bestItem = getBestItem(feasiblePopulation_);
+    const auto &bestItem = getBestItem(mainPopulation_);
     return {*bestItem.solution, bestItem.objValue};
 }
 
 template <typename GraphT>
-std::vector<std::pair<Solution, int>> DualPopulationT<GraphT>::getFeasiblePopulation() const
+std::vector<std::pair<Solution, int>> DualPopulationT<GraphT>::getMainPopulation() const
 {
     std::vector<std::pair<Solution, int>> snapshot;
-    snapshot.reserve(feasiblePopulation_.size());
-    for (const auto &item : feasiblePopulation_)
+    snapshot.reserve(mainPopulation_.size());
+    for (const auto &item : mainPopulation_)
     {
         snapshot.emplace_back(*item.solution, item.objValue);
     }
@@ -568,21 +639,21 @@ std::vector<std::pair<Solution, int>> DualPopulationT<GraphT>::getFeasiblePopula
 }
 
 template <typename GraphT>
-int DualPopulationT<GraphT>::getFeasiblePopulationSize() const
+int DualPopulationT<GraphT>::getMainPopulationSize() const
 {
-    return static_cast<int>(feasiblePopulation_.size());
+    return static_cast<int>(mainPopulation_.size());
 }
 
 template <typename GraphT>
-int DualPopulationT<GraphT>::getFeasibleIterationCount() const
+int DualPopulationT<GraphT>::getMainGenerationCount() const
 {
-    return feasibleIterationCount_;
+    return mainGenerationCount_;
 }
 
 template <typename GraphT>
-int DualPopulationT<GraphT>::getInfeasibleIterationCount() const
+int DualPopulationT<GraphT>::getAuxiliaryGenerationCount() const
 {
-    return infeasibleIterationCount_;
+    return auxiliaryGenerationCount_;
 }
 
 template class DualPopulationT<CNP_Graph>;

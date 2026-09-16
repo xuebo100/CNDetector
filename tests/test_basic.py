@@ -167,9 +167,13 @@ def test_solver_params_validation():
     # main one (see the paper's definition of the relaxation coefficient).
     SolverParams(relaxation_coefficient=0.0)
     with pytest.raises(ValueError):
-        SolverParams(beta=-0.1)
+        SolverParams(allowable_idle_iterations=0)
     with pytest.raises(ValueError):
-        SolverParams(beta=1.1)
+        SolverParams(stagnation_threshold=0)
+    with pytest.raises(ValueError):
+        SolverParams(backbone_rate=-0.1)
+    with pytest.raises(ValueError):
+        SolverParams(backbone_rate=1.1)
 
 
 def test_custom_solver_params():
@@ -179,7 +183,8 @@ def test_custom_solver_params():
         thread_count=1,
         interaction_period=5,
         relaxation_coefficient=0.5,
-        beta=0.7,
+        allowable_idle_iterations=200,
+        backbone_rate=0.7,
         search="L2NS",
     )
     result = model.solve(
@@ -217,7 +222,7 @@ def test_result_stats_disabled():
     assert result.stats is None
 
 
-def test_feasible_population_normalized():
+def test_main_population_normalized():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
@@ -225,9 +230,9 @@ def test_feasible_population_normalized():
         seed=1,
         display=False,
     )
-    assert len(result.feasible_population) >= 1
-    overlaps = result.feasible_population_overlap_ratios
-    assert len(overlaps) == len(result.feasible_population)
+    assert len(result.main_population) >= 1
+    overlaps = result.main_population_overlap_ratios
+    assert len(overlaps) == len(result.main_population)
 
 
 def test_cpp_graph_add_node_restores_connectivity():
@@ -238,7 +243,7 @@ def test_cpp_graph_add_node_restores_connectivity():
         problem_data.add_edge(i, i + 1)
 
     graph = problem_data.create_original_graph(budget=1, seed=42)
-    graph = graph.get_random_feasible_graph(seed=1)
+    graph = graph.get_random_full_budget_graph(seed=1)
 
     removed = graph.get_removed_nodes()
     assert len(removed) == 1
@@ -262,8 +267,8 @@ def test_cpp_random_feasible_graph_respects_seed():
         pd.add_edge(i, i + 1)
 
     graph = pd.create_original_graph(budget=3, seed=42)
-    g1 = graph.get_random_feasible_graph(seed=123)
-    g2 = graph.get_random_feasible_graph(seed=123)
+    g1 = graph.get_random_full_budget_graph(seed=123)
+    g2 = graph.get_random_full_budget_graph(seed=123)
     assert g1.get_removed_nodes() == g2.get_removed_nodes()
 
 

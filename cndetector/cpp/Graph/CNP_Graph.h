@@ -47,19 +47,16 @@ private:
     std::vector<ComponentIndex>
         nodeToComponentIndex_;  ///< Stores the component index for each vertex
     std::vector<Component> connectedComponents_;
-    int connectedPairs_ = 0;  ///< Active objective value (CNP1 pairwise connectivity)
+    int connectedPairs_ = 0;  ///< Active objective value (residual pairwise connectivity)
     mutable RandomNumberGenerator rng_;
 
     // Rebuild csrOffset_/csrAdj_ from originalAdjList_ and resync
     // removedFlag_ from removedNodes. Call after wholesale adjacency changes.
     void rebuildCSR();
 
-    // Objective contribution of one component of the given size (CNP1 pairwise
-    // connectivity: |C|*(|C|-1)/2).
+    // Objective contribution of one component of the given size, i.e. the
+    // number of connected node pairs it holds: |C|*(|C|-1)/2.
     int componentContribution(size_t size) const;
-
-    // Selects the larger component to remove.
-    ComponentIndex selectRemovedLargerComponent() const;
 
     // Tarjan algorithm auxiliary variables
     mutable std::vector<int> dfn_;         ///< Node discovery time
@@ -224,17 +221,18 @@ public:
     void setNodeAge(Node node, Age age);
 
     /**
-     * Calculates the objective value of the graph (CNP1 pairwise connectivity).
+     * Calculates the objective value of the graph.
      *
      * Returns
      * -------
      * int
-     *     CNP1 pairwise connectivity Σ|C|(|C|-1)/2.
+     *     The residual pairwise connectivity, sum |C|*(|C|-1)/2 over the
+     *     connected components of the graph.
      */
     int getObjectiveValue() const;
 
-    // Converts to random feasible solution using the given seed.
-    std::unique_ptr<CNP_Graph> getRandomFeasibleGraph(int seed) const;
+    // Returns a copy in which numToRemove_ nodes have been removed at random.
+    std::unique_ptr<CNP_Graph> getRandomFullBudgetGraph(int seed) const;
 
     // Converts to random partial solution with specified budget and seed.
     std::unique_ptr<CNP_Graph> getRandomPartialGraph(int partialBudget, int seed) const;
@@ -245,11 +243,10 @@ public:
     // Finds connected component using DFS.
     Component dfsFindComponent(Node startNode) const;
 
-    // Selects component to remove.
+    // Draws uniformly at random one of the large connected components of the
+    // residual graph: those whose size is at least the midpoint between the
+    // smallest and the largest component size.
     ComponentIndex selectRemovedComponent() const;
-
-    // Randomly selects node to remove from specified component.
-    Node randomSelectNodeFromComponent(ComponentIndex componentIndex) const;
 
     // Selects node to remove from component based on weight.
     Node ageSelectNodeFromComponent(ComponentIndex componentIndex) const;

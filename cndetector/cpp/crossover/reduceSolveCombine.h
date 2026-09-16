@@ -6,26 +6,30 @@
 #include <memory>
 #include <optional>
 
-// Defaults follow the irace-tuned parameter settings of Table 1:
-// theta = 10, beta = 20, alpha = 0.05,
-// xi = 1000 (L2NSConfig::randomIdleProduct), delta = 500, kappa = 2.
+// The defaults are the tuned values of the solver: theta = 10, kappa = 2,
+// beta = 20, alpha = 0.05, gamma = 1000 (L2NSConfig::allowableIdleIterations)
+// and delta = 500.
 struct SolverConfig
 {
     // theta: size of each of the two populations.
     int populationSize = 10;
-    // kappa: thread count. Algorithm 2 runs one offspring per thread, so this
-    // is also the number of offspring generated per population per generation.
+    // kappa: thread count. Each thread contributes exactly one offspring per
+    // population per generation, so this is also the number of offspring
+    // generated per population per generation.
     int threadCount = 2;
-    // beta: generations between two heterogeneous population cooperations.
+    // beta: generations between two heterogeneous population cooperations,
+    // i.e. how often the two populations exchange information.
     int interactionPeriod = 20;
     int seed = 0;
     // alpha: relaxation coefficient. The auxiliary population carries
-    // floor(k * (1 - alpha)) nodes per solution.
+    // floor(k * (1 - alpha)) nodes per solution instead of k.
     double relaxationCoefficient = 0.05;
-    // delta: consecutive non-improving generations that trigger the
-    // reconstruction of the auxiliary population (Algorithm 4, lines 8-11).
+    // delta: consecutive non-improving generations after which the auxiliary
+    // population is rebuilt from scratch.
     int stagnationThreshold = 500;
-    double beta = 0.9;
+    // Probability with which the crossover keeps a node of the backbone shared
+    // by the two parents. Not one of the tuned parameters above.
+    double backboneRate = 0.9;
     double displayInterval = 60.0;
     // Hard wall-clock budget in seconds. <= 0 means "no limit".
     double maxRuntime = 0.0;
@@ -41,13 +45,15 @@ int deterministicSeed(
 
 L2NSConfig resolveL2NSConfig(const SolverConfig &config);
 
-// Reduce-Solve-Combine crossover, generic over the graph type (CNP_Graph or
-// DCNP_Graph). Explicitly instantiated in reduceSolveCombine.cpp.
+// Reduce-solve-combine crossover: fix the backbone shared by the two parents
+// (reduce), run the local search on the reduced instance (solve), then merge
+// the backbone with that result (combine). Generic over the graph type
+// (CNP_Graph or DCNP_Graph); explicitly instantiated in reduceSolveCombine.cpp.
 template <typename GraphT>
 std::unique_ptr<GraphT> reduceSolveCombine(
     const GraphT &originalGraph,
     const std::pair<const Solution *, const Solution *> &parents,
-    double beta,
+    double backboneRate,
     std::optional<int> targetBudget,
     int seed,
     const SolverConfig &config,

@@ -38,8 +38,8 @@ Solution pysetToSolution(const py::set &py_set)
 PYBIND11_MODULE(_cndetector, m)
 {
     m.doc() = R"doc(
-        CNDetector - Python bindings for Population-based Dual Memetic Search
-        for Critical Node Problems.
+        CNDetector - Python bindings for the parallel co-evolutionary memetic
+        search for critical node detection problems.
     )doc";
 
     // ProblemData
@@ -83,8 +83,8 @@ PYBIND11_MODULE(_cndetector, m)
              [](const CNP_Graph &self) { return solutionToPyset(self.getRemovedNodes()); })
         .def("set_node_age", &CNP_Graph::setNodeAge)
         .def("get_objective_value", &CNP_Graph::getObjectiveValue)
-        .def("get_random_feasible_graph",
-             &CNP_Graph::getRandomFeasibleGraph,
+        .def("get_random_full_budget_graph",
+             &CNP_Graph::getRandomFullBudgetGraph,
              py::arg("seed"),
              py::return_value_policy::take_ownership)
         .def("get_random_partial_graph",
@@ -108,8 +108,8 @@ PYBIND11_MODULE(_cndetector, m)
              [](const DCNP_Graph &self) { return solutionToPyset(self.getRemovedNodes()); })
         .def("set_node_age", &DCNP_Graph::setNodeAge)
         .def("get_objective_value", &DCNP_Graph::getObjectiveValue)
-        .def("get_random_feasible_graph",
-             &DCNP_Graph::getRandomFeasibleGraph,
+        .def("get_random_full_budget_graph",
+             &DCNP_Graph::getRandomFullBudgetGraph,
              py::arg("seed"),
              py::return_value_policy::take_ownership)
         .def("get_random_partial_graph",
@@ -129,15 +129,15 @@ PYBIND11_MODULE(_cndetector, m)
     {
         using PopulationT = DualPopulationT<GraphT>;
         py::class_<PopulationT>(module, name)
-            .def(py::init([](const GraphT &graph, int feasibleBudget,
-                             int infeasibleBudget, SolverConfig config) {
+            .def(py::init([](const GraphT &graph, int mainBudget,
+                             int auxiliaryBudget, SolverConfig config) {
                      return new PopulationT(
-                         graph, feasibleBudget, infeasibleBudget,
+                         graph, mainBudget, auxiliaryBudget,
                          std::move(config), std::chrono::steady_clock::now());
                  }),
                  py::arg("original_graph"),
-                 py::arg("feasible_budget"),
-                 py::arg("infeasible_budget"),
+                 py::arg("main_budget"),
+                 py::arg("auxiliary_budget"),
                  py::arg("config"))
             .def("initialize",
                  [](PopulationT &self)
@@ -156,25 +156,25 @@ PYBIND11_MODULE(_cndetector, m)
                      self.advanceOneGeneration();
                  })
             .def("drain_iteration_events", &PopulationT::drainIterationEvents)
-            .def("drain_exchange_events", &PopulationT::drainExchangeEvents)
-            .def("get_best_feasible_solution",
+            .def("drain_hpc_events", &PopulationT::drainHPCEvents)
+            .def("get_best_solution",
                  [](const PopulationT &self)
                  {
-                     auto [solution, objValue] = self.getBestFeasibleSolution();
+                     auto [solution, objValue] = self.getBestSolution();
                      return py::make_tuple(solutionToPyset(solution), objValue);
                  })
-            .def("get_feasible_population",
+            .def("get_main_population",
                  [](const PopulationT &self)
                  {
                      py::list population;
-                     for (const auto &[solution, objValue] : self.getFeasiblePopulation())
+                     for (const auto &[solution, objValue] : self.getMainPopulation())
                      {
                          population.append(py::make_tuple(solutionToPyset(solution), objValue));
                      }
                      return population;
                  })
-            .def("get_feasible_population_size", &PopulationT::getFeasiblePopulationSize)
-            .def("get_feasible_iteration_count", &PopulationT::getFeasibleIterationCount);
+            .def("get_main_population_size", &PopulationT::getMainPopulationSize)
+            .def("get_main_generation_count", &PopulationT::getMainGenerationCount);
     };
     registerDualPopulation(m, "DualPopulation", std::type_identity<CNP_Graph>{});
     registerDualPopulation(m, "DCNPDualPopulation", std::type_identity<DCNP_Graph>{});
@@ -188,7 +188,7 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("interaction_period", &SolverConfig::interactionPeriod)
         .def_readwrite("seed", &SolverConfig::seed)
         .def_readwrite("relaxation_coefficient", &SolverConfig::relaxationCoefficient)
-        .def_readwrite("beta", &SolverConfig::beta)
+        .def_readwrite("backbone_rate", &SolverConfig::backboneRate)
         .def_readwrite("display_interval", &SolverConfig::displayInterval)
         .def_readwrite("max_runtime", &SolverConfig::maxRuntime)
         .def_readwrite("search", &SolverConfig::search)
@@ -197,17 +197,21 @@ PYBIND11_MODULE(_cndetector, m)
     // L2NSConfig
     py::class_<L2NSConfig>(m, "L2NSConfig")
         .def(py::init<>())
-        .def_readwrite("max_idle_steps", &L2NSConfig::maxIdleSteps)
-        .def_readwrite("theta", &L2NSConfig::theta)
-        .def_readwrite("min_batch_size", &L2NSConfig::minBatchSize)
-        .def_readwrite("max_batch_size", &L2NSConfig::maxBatchSize)
-        .def_readwrite("batch_idle_threshold", &L2NSConfig::batchIdleThreshold)
-        .def_readwrite("randomize_batch_and_idle", &L2NSConfig::randomizeBatchAndIdle)
-        .def_readwrite("random_batch_min", &L2NSConfig::randomBatchMin)
-        .def_readwrite("random_batch_max", &L2NSConfig::randomBatchMax)
-        .def_readwrite("random_idle_product", &L2NSConfig::randomIdleProduct)
-        .def_readwrite("random_min_idle_steps", &L2NSConfig::randomMinIdleSteps)
-        .def_readwrite("random_max_idle_steps", &L2NSConfig::randomMaxIdleSteps);
+        .def_readwrite("allowable_idle_iterations", &L2NSConfig::allowableIdleIterations)
+        .def_readwrite("min_destroy_size", &L2NSConfig::minDestroySize)
+        .def_readwrite("max_destroy_size", &L2NSConfig::maxDestroySize)
+        .def_readwrite("idle_iteration_cap", &L2NSConfig::idleIterationCap)
+        .def_readwrite("idle_iteration_floor", &L2NSConfig::idleIterationFloor)
+        .def_readwrite("impact_selection_rate", &L2NSConfig::impactSelectionRate)
+        .def_readwrite("randomize_destroy_size", &L2NSConfig::randomizeDestroySize)
+        .def_readwrite("adaptive_max_idle_iterations",
+                       &L2NSConfig::adaptiveMaxIdleIterations)
+        .def_readwrite("adaptive_min_destroy_size",
+                       &L2NSConfig::adaptiveMinDestroySize)
+        .def_readwrite("adaptive_max_destroy_size",
+                       &L2NSConfig::adaptiveMaxDestroySize)
+        .def_readwrite("adaptive_growth_interval",
+                       &L2NSConfig::adaptiveGrowthInterval);
 
     // IterationEvent
     py::class_<IterationEvent>(m, "IterationEvent")
@@ -217,18 +221,18 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("best_objective", &IterationEvent::bestObjective)
         .def_readwrite("population_size", &IterationEvent::populationSize);
 
-    // ExchangeReport
-    py::class_<ExchangeReport>(m, "ExchangeReport")
+    // HPCReport
+    py::class_<HPCReport>(m, "HPCReport")
         .def(py::init<>())
-        .def_readwrite("exchange_triggered", &ExchangeReport::exchangeTriggered)
-        .def_readwrite("first_population_candidate_obj", &ExchangeReport::firstPopulationCandidateObj)
-        .def_readwrite("first_population_improved_best", &ExchangeReport::firstPopulationImprovedBest);
+        .def_readwrite("hpc_triggered", &HPCReport::hpcTriggered)
+        .def_readwrite("candidate_obj_value", &HPCReport::candidateObjValue)
+        .def_readwrite("improved_main_best", &HPCReport::improvedMainBest);
 
-    // ExchangeEvent
-    py::class_<ExchangeEvent>(m, "ExchangeEvent")
+    // HPCEvent
+    py::class_<HPCEvent>(m, "HPCEvent")
         .def(py::init<>())
-        .def_readwrite("iteration", &ExchangeEvent::iteration)
-        .def_readwrite("report", &ExchangeEvent::report);
+        .def_readwrite("iteration", &HPCEvent::iteration)
+        .def_readwrite("report", &HPCEvent::report);
 
     // LocalSearchResult
     py::class_<LocalSearchResult>(m, "LocalSearchResult")
@@ -256,10 +260,10 @@ PYBIND11_MODULE(_cndetector, m)
 
     m.def("resolve_l2ns_config", &resolveL2NSConfig, py::arg("config"));
 
-    m.def("set_max_threads", &pdms::setMaxThreads, py::arg("count"),
+    m.def("set_max_threads", &cndetector::setMaxThreads, py::arg("count"),
           "Cap the solver's worker threads (0 restores the hardware default). "
           "Results are identical for any thread count.");
-    m.def("get_max_threads", &pdms::maxThreads,
+    m.def("get_max_threads", &cndetector::maxThreads,
           "Effective worker-thread cap currently in use.");
 
     m.def("deterministic_seed", &deterministicSeed,

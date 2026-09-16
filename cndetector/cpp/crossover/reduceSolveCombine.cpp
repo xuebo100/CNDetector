@@ -30,13 +30,13 @@ L2NSConfig resolveL2NSConfig(const SolverConfig &config)
 
     if (config.search == "L2NS")
     {
-        resolved.randomizeBatchAndIdle = true;
+        resolved.randomizeDestroySize = true;
         return resolved;
     }
 
     if (config.search == "L2NS-ADAPT")
     {
-        resolved.randomizeBatchAndIdle = false;
+        resolved.randomizeDestroySize = false;
         return resolved;
     }
 
@@ -47,9 +47,9 @@ L2NSConfig resolveL2NSConfig(const SolverConfig &config)
         {
             throw std::runtime_error("L2NS fixed batch size must be positive");
         }
-        resolved.randomizeBatchAndIdle = false;
-        resolved.minBatchSize = fixedBatchSize;
-        resolved.maxBatchSize = fixedBatchSize;
+        resolved.randomizeDestroySize = false;
+        resolved.adaptiveMinDestroySize = fixedBatchSize;
+        resolved.adaptiveMaxDestroySize = fixedBatchSize;
         return resolved;
     }
 
@@ -61,15 +61,16 @@ template <typename GraphT>
 std::unique_ptr<GraphT> reduceSolveCombine(
     const GraphT &originalGraph,
     const std::pair<const Solution *, const Solution *> &parents,
-    double beta,
+    double backboneRate,
     std::optional<int> targetBudget,
     int seed,
     const SolverConfig &config,
     Deadline deadline)
 {
-    if (beta < 0.0 || beta > 1.0)
+    if (backboneRate < 0.0 || backboneRate > 1.0)
     {
-        throw std::invalid_argument("beta for RSC crossover must be in [0, 1]");
+        throw std::invalid_argument(
+            "backboneRate for the RSC crossover must be in [0, 1]");
     }
 
     RandomNumberGenerator rng;
@@ -91,7 +92,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
         {
             break;
         }
-        if (rhs.contains(node) && rng.generateProbability() < beta)
+        if (rhs.contains(node) && rng.generateProbability() < backboneRate)
         {
             nodesToRemove.insert(node);
         }
@@ -117,7 +118,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
     }
     else
     {
-        reducedGraph = workingGraph->getRandomFeasibleGraph(
+        reducedGraph = workingGraph->getRandomFullBudgetGraph(
             deterministicSeed(seed, 0x5002u));
     }
 

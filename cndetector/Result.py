@@ -7,7 +7,11 @@ from typing import Optional, Set
 
 @dataclass
 class Result:
-    """Container for solver run results."""
+    """Container for the outcome of one CNDetector run.
+
+    ``main_population`` is the final main population of the search, i.e. the
+    pool of solutions that remove exactly ``budget`` nodes.
+    """
 
     best_solution: Set[int] = field(default_factory=set)
     best_obj_value: float = math.inf
@@ -15,7 +19,7 @@ class Result:
     runtime: float = 0.0
     best_found_at_time: float = 0.0
     stats: Optional[list[dict]] = None
-    feasible_population: list[tuple[Set[int], int]] = field(default_factory=list)
-    feasible_population_overlap_ratios: list[list[float]] = field(
+    main_population: list[tuple[Set[int], int]] = field(default_factory=list)
+    main_population_overlap_ratios: list[list[float]] = field(
         default_factory=list
     )

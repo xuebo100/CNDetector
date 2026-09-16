@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-namespace pdms
+namespace cndetector
 {
 
 namespace detail
@@ -147,6 +147,6 @@ void parallelFor(int begin, int end, Fn &&fn)
     }
 }
 
-}  // namespace pdms
+}  // namespace cndetector
 
 #endif  // PARALLEL_FOR_H
