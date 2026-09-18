@@ -17,7 +17,7 @@ from .constants import (
 from .params import SolverParams
 from .read import read, read_adjacency_list_format, read_dimacs_edge_format
 from .stop import (
-    MaxIterations,
+    MaxGenerations,
     MaxRuntime,
     NoImprovement,
     StoppingCriterion,
@@ -42,7 +42,7 @@ __all__ = [
     "DCNP",
     "DEFAULT_DISPLAY_INTERVAL",
     "L2NS",
-    "MaxIterations",
+    "MaxGenerations",
     "MaxRuntime",
     "Model",
     "NoImprovement",

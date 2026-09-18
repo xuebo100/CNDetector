@@ -4,7 +4,7 @@ import pytest
 
 import cndetector
 from cndetector import (
-    MaxIterations,
+    MaxGenerations,
     MaxRuntime,
     Model,
     NoImprovement,
@@ -56,7 +56,7 @@ def test_solve_small_graph():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
-        stopping_criterion=MaxIterations(5),
+        stopping_criterion=MaxGenerations(5),
         seed=42,
         display=False,
     )
@@ -70,14 +70,14 @@ def test_solve_rejects_invalid_budget():
     with pytest.raises(ValueError):
         model.solve(
             budget=0,
-            stopping_criterion=MaxIterations(1),
+            stopping_criterion=MaxGenerations(1),
             seed=1,
             display=False,
         )
     with pytest.raises(ValueError):
         model.solve(
             budget=10,  # equal to n -> invalid
-            stopping_criterion=MaxIterations(1),
+            stopping_criterion=MaxGenerations(1),
             seed=1,
             display=False,
         )
@@ -88,7 +88,7 @@ def test_solve_with_seed_zero():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
-        stopping_criterion=MaxIterations(3),
+        stopping_criterion=MaxGenerations(3),
         seed=0,
         display=False,
     )
@@ -98,11 +98,11 @@ def test_solve_with_seed_zero():
 def test_solve_is_deterministic_for_same_seed():
     model = _cycle_with_chords_model()
     out_a = model.solve(
-        budget=3, stopping_criterion=MaxIterations(10),
+        budget=3, stopping_criterion=MaxGenerations(10),
         seed=7, display=False,
     )
     out_b = model.solve(
-        budget=3, stopping_criterion=MaxIterations(10),
+        budget=3, stopping_criterion=MaxGenerations(10),
         seed=7, display=False,
     )
     assert out_a.best_obj_value == out_b.best_obj_value
@@ -189,7 +189,7 @@ def test_custom_solver_params():
     )
     result = model.solve(
         budget=3,
-        stopping_criterion=MaxIterations(10),
+        stopping_criterion=MaxGenerations(10),
         seed=42,
         params=params,
         display=False,
@@ -201,7 +201,7 @@ def test_result_stats_collected_by_default():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
-        stopping_criterion=MaxIterations(5),
+        stopping_criterion=MaxGenerations(5),
         seed=1,
         display=False,
     )
@@ -214,7 +214,7 @@ def test_result_stats_disabled():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
-        stopping_criterion=MaxIterations(5),
+        stopping_criterion=MaxGenerations(5),
         seed=1,
         display=False,
         collect_stats=False,
@@ -226,7 +226,7 @@ def test_main_population_normalized():
     model = _cycle_with_chords_model()
     result = model.solve(
         budget=2,
-        stopping_criterion=MaxIterations(10),
+        stopping_criterion=MaxGenerations(10),
         seed=1,
         display=False,
     )
@@ -322,7 +322,7 @@ def test_dcnp_solve_returns_budget_sized_solution():
         problem="DCNP",
         budget=1,
         distance=2,
-        stopping_criterion=MaxIterations(2),
+        stopping_criterion=MaxGenerations(2),
         seed=1,
         display=False,
     )
@@ -339,7 +339,7 @@ def test_dcnp_requires_distance():
         model.solve(
             problem="DCNP",
             budget=1,
-            stopping_criterion=MaxIterations(1),
+            stopping_criterion=MaxGenerations(1),
             seed=1,
             display=False,
         )

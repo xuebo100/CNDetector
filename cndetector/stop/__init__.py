@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from .MaxIterations import MaxIterations
+from .MaxGenerations import MaxGenerations
 from .MaxRuntime import MaxRuntime
 from .NoImprovement import NoImprovement
 from .StoppingCriterion import StoppingCriterion
 
 __all__ = [
-    "MaxIterations",
+    "MaxGenerations",
     "MaxRuntime",
     "NoImprovement",
     "StoppingCriterion",
