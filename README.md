@@ -46,7 +46,7 @@ or MSVC 2022). `meson`, `ninja` and `pybind11` are pulled in automatically.
 ## Quick start — CNP
 
 ```python
-from cndetector import Model, MaxIterations
+from cndetector import Model, MaxGenerations
 
 model = Model()
 for u, v in [
@@ -58,7 +58,7 @@ for u, v in [
 
 result = model.solve(
     budget=3,                            # remove 3 nodes
-    stopping_criterion=MaxIterations(50),
+    stopping_criterion=MaxGenerations(50),
     seed=42,
 )
 
@@ -85,17 +85,19 @@ Select DCNP with `problem="DCNP"` and a `distance`:
 import cndetector
 from cndetector import MaxRuntime
 
-model = cndetector.Model.from_data(cndetector.read("Instances/DCNP/R1/karate.txt"))
+model = cndetector.Model.from_data(
+    cndetector.read("Instances/DCNP/R2/yeast1.txt")
+)
 
 result = model.solve(
     problem="DCNP",
-    budget=3,
-    distance=2,                          # count pairs within 2 hops
-    stopping_criterion=MaxRuntime(10),
+    budget=int(0.05 * len(model.nodes)),
+    distance=3,                          # count pairs within 3 hops
+    stopping_criterion=MaxRuntime(60),
     seed=1,
 )
 
-print(f"Best D-hop pairs: {result.best_obj_value}")
+print(f"Best b-hop pairs: {result.best_obj_value}")
 print(f"Removed nodes:    {sorted(result.best_solution)}")
 ```
 
@@ -123,9 +125,9 @@ CNDetector therefore applies a lighter parameter set automatically — see
 
 | Criterion | Stops when |
 |-----------|------------|
-| `MaxIterations(n)` | `n` solver iterations have run |
+| `MaxGenerations(n)` | `n` generations have been completed |
 | `MaxRuntime(s)` | `s` seconds of wall-clock time have elapsed |
-| `NoImprovement(n)` | the best objective hasn't improved for `n` iterations |
+| `NoImprovement(n)` | the best objective hasn't improved for `n` generations |
 
 Any `Callable[[float], bool]` works, so you can supply your own.
 
@@ -190,8 +192,7 @@ when you leave these knobs at the library defaults**:
 | `l2ns_idle_iteration_floor` | 1 | **20** |
 | `l2ns_idle_iteration_cap` | 500 | **80** |
 
-Passing an explicit value overrides it. These values were tuned on the 100–500
-node instances USAir97, Circuit and Ecoli.
+Passing an explicit value overrides it.
 
 ## Development
 
