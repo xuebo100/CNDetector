@@ -1,0 +1,132 @@
+[project]
+name = "cndetector"
+version = "0.4.0"
+description = "A high-performance solver for Critical Node Problems using parallel co-evolutionary memetic search"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+keywords = [
+    "graph",
+    "optimization",
+    "critical-node-problem",
+    "distance-based-critical-node-problem",
+    "memetic-search",
+    "metaheuristic",
+    "parallel",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Development Status :: 3 - Alpha",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+]
+requires-python = ">=3.9"
+authors = [
+    { name = "xuebo100", email = "x3219658574@126.com" },
+]
+maintainers = [
+    { name = "xuebo100", email = "x3219658574@126.com" },
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/xuebo100/CNDetector"
+Repository = "https://github.com/xuebo100/CNDetector"
+Issues = "https://github.com/xuebo100/CNDetector/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[dependency-groups]
+build = [
+    "meson>=1.0.0",
+    "ninja>=1.11.1",
+    "pybind11>=2.10.0",
+]
+
+[tool.uv]
+default-groups = ["build", "dev"]
+package = true
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", "Q", "RET", "RSE", "RUF", "SIM",
+]
+
+[tool.ruff.lint.isort]
+case-sensitive = true
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = [
+    "^docs/",
+    "^build/",
+    "^dist/",
+]
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+# CI builds the extension in place (meson install into ./cndetector) instead of
+# installing the wheel, so the repo root must be on sys.path for `import
+# cndetector` to work under a bare `pytest` invocation (which, unlike `python -m
+# pytest`, does not add the cwd).
+pythonpath = ["."]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
+skip = "pp3*-* *_ppc64le *_i686 *_s390x *-win32 *-musllinux*"
+build-frontend = "build"
+test-requires = ["pytest>=7.0.0"]
+test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.windows]
+before-build = "pip install delvewheel"
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
+test-command = 'python -c "import cndetector; import cndetector._cndetector"'
+
+[tool.poetry]
+exclude = [
+    "cndetector/**/*.so",
+    "cndetector/**/*.pyd",
+    "cndetector/**/*.dylib",
+    "**/__pycache__",
+    "**/*.pyc",
+]
+include = [
+    { path = "tests/", format = "sdist" },
+    { path = "meson.build", format = "sdist" },
+    { path = "buildtools/*.py", format = "sdist" },
+    { path = "cndetector/**/*.so", format = "wheel" },
+    { path = "cndetector/**/*.pyd", format = "wheel" },
+    { path = "cndetector/**/*.pyi", format = ["sdist", "wheel"] },
+    { path = "cndetector/py.typed", format = ["sdist", "wheel"] },
+]
+packages = [
+    { include = "cndetector" },
+]
+
+[tool.poetry.build]
+generate-setup-file = false
+script = "buildtools/build_wrapper.py"
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "meson", "ninja", "pybind11"]
+build-backend = "poetry.core.masonry.api"
