@@ -2,9 +2,10 @@
 #define REDUCE_SOLVE_COMBINE_H
 
 #include "../Graph/Types.h"
-#include "../search/L2NSSearch.h"
+#include "../search/LocalSearch.h"
 #include <memory>
 #include <optional>
+#include <string>
 
 // The defaults are the tuned values of the solver: theta = 10, kappa = 2,
 // beta = 20, alpha = 0.05, gamma = 1000 (L2NSConfig::allowableIdleIterations)
@@ -13,9 +14,9 @@ struct SolverConfig
 {
     // theta: size of each of the two populations.
     int populationSize = 10;
-    // kappa: thread count. Each thread contributes exactly one offspring per
-    // population per generation, so this is also the number of offspring
-    // generated per population per generation.
+    // kappa: thread count. Each population produces this many offspring per
+    // generation, and the search runs on up to this many worker threads (see
+    // cndetector::setMaxThreads for a lower cap).
     int threadCount = 2;
     // beta: generations between two heterogeneous population cooperations,
     // i.e. how often the two populations exchange information.
@@ -33,17 +34,25 @@ struct SolverConfig
     double displayInterval = 60.0;
     // Hard wall-clock budget in seconds. <= 0 means "no limit".
     double maxRuntime = 0.0;
+    // Local search refining every new solution: "L2NS" (default) or "CHNS".
     std::string search = "L2NS";
+    // Crossover producing the offspring: "RSC" (default) or "DBX".
+    std::string crossover = "RSC";
     L2NSConfig l2ns;
-    L2NSConfig resolvedL2ns;
+    CHNSConfig chns;
 };
+
+enum class CrossoverStrategy { RSC, DBX };
 
 uint64_t splitmix64(uint64_t value);
 
 int deterministicSeed(
     int baseSeed, uint64_t streamId, uint64_t iteration = 0, uint64_t slot = 0);
 
-L2NSConfig resolveL2NSConfig(const SolverConfig &config);
+// Parse config.search and config.crossover; both throw std::invalid_argument
+// on an unknown name.
+LocalSearchSettings resolveLocalSearch(const SolverConfig &config);
+CrossoverStrategy resolveCrossover(const SolverConfig &config);
 
 // Reduce-solve-combine crossover: fix the backbone shared by the two parents
 // (reduce), run the local search on the reduced instance (solve), then merge
@@ -56,7 +65,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
     double backboneRate,
     std::optional<int> targetBudget,
     int seed,
-    const SolverConfig &config,
+    const LocalSearchSettings &search,
     Deadline deadline = noDeadline());
 
 #endif // REDUCE_SOLVE_COMBINE_H

@@ -56,6 +56,7 @@ libsearch = static_library(
     'search',
     [
         SRC_DIR / 'search' / 'L2NSSearch.cpp',
+        SRC_DIR / 'search' / 'CHNSSearch.cpp',
         SRC_DIR / 'search' / 'DCNPSearch.cpp',
     ],
     include_directories: INCLUDES,
@@ -66,6 +67,7 @@ libcrossover = static_library(
     'crossover',
     [
         SRC_DIR / 'crossover' / 'reduceSolveCombine.cpp',
+        SRC_DIR / 'crossover' / 'doubleBackboneBasedCrossover.cpp',
     ],
     include_directories: INCLUDES,
     link_with: [libgraph, libsearch],

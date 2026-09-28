@@ -10,17 +10,21 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from .ProgressPrinter import ProgressPrinter
 from .Result import Result
 from .constants import (
+    CHNS,
     CNP,
+    DBX,
     DCNP,
     DEFAULT_ALLOWABLE_IDLE_ITERATIONS,
     DEFAULT_INTERACTION_PERIOD,
     DEFAULT_POPULATION_SIZE,
+    L2NS,
     PACKAGE_LOGGER_NAME,
+    RSC,
 )
 from .params import SolverParams
 
 if TYPE_CHECKING:
-    from ._cndetector import ProblemData, SolverConfig
+    from ._cndetector import CNP_Graph, DCNP_Graph, ProblemData, SolverConfig
     from .stop import StoppingCriterion
 
 logger = logging.getLogger(PACKAGE_LOGGER_NAME)
@@ -28,9 +32,8 @@ logger = logging.getLogger(PACKAGE_LOGGER_NAME)
 # DCNP-specific parameter set. Evaluating the DCNP objective rebuilds the b-hop
 # trees at every step, making one local search one to two orders of magnitude
 # more expensive than for CNP; with the CNP settings the two populations barely
-# get past initialization within the time limit. Applied only when the caller
-# left these knobs at the library defaults, so an explicit SolverParams value
-# always wins.
+# get past initialization within the time limit. Applied to every knob the
+# caller left at None, so an explicit SolverParams value always wins.
 _DCNP_POPULATION_SIZE = 4  # theta
 _DCNP_INTERACTION_PERIOD = 5  # beta
 _DCNP_ALLOWABLE_IDLE_ITERATIONS = 100  # gamma
@@ -67,7 +70,6 @@ def _apply_l2ns_overrides(
         "idle_iteration_floor": "l2ns_idle_iteration_floor",
         "idle_iteration_cap": "l2ns_idle_iteration_cap",
         "impact_selection_rate": "l2ns_impact_selection_rate",
-        "adaptive_max_idle_iterations": "l2ns_adaptive_max_idle_iterations",
     }
     defaults = dcnp_defaults or {}
     for l2ns_field, param_attr in field_to_param.items():
@@ -268,12 +270,12 @@ class Model:
         population_size, thread_count, search
             Convenience overrides for the corresponding ``params`` fields.
         display_interval
-            Minimum seconds between iteration log lines. Defaults to
+            Minimum seconds between progress log lines. Defaults to
             ``params.display_interval``.
         display
             If ``True``, log progress to the package logger.
         collect_stats
-            If ``True``, record a per-iteration trace in :attr:`Result.stats`.
+            If ``True``, record a per-generation trace in :attr:`Result.stats`.
         problem
             ``"CNP"`` (default) or ``"DCNP"``.
         distance
@@ -291,27 +293,11 @@ class Model:
             else params.display_interval
         )
 
-        # Normalize the problem name.
         normalized_problem = str(problem).upper().replace("_", "-")
-        if normalized_problem == DCNP:
-            if not isinstance(budget, int) or budget < 1:
-                raise ValueError("budget must be a positive integer")
-            if budget >= len(self.nodes):
-                raise ValueError(
-                    f"budget ({budget}) must be smaller than the number of "
-                    f"nodes ({len(self.nodes)})"
-                )
-            if not isinstance(distance, int) or distance < 1:
-                raise ValueError("distance must be a positive integer for DCNP")
-            return self._solve_dcnp(
-                budget, distance, stopping_criterion, seed, params,
-                effective_display_interval, display, collect_stats,
-            )
-
-        if normalized_problem != CNP:
+        if normalized_problem not in (CNP, DCNP):
             raise ValueError(f"unknown problem {problem!r}; expected 'CNP' or 'DCNP'")
+        dcnp = normalized_problem == DCNP
 
-        # Validate the budget argument.
         if not isinstance(budget, int) or budget < 1:
             raise ValueError("budget must be a positive integer")
         if budget >= len(self.nodes):
@@ -320,11 +306,27 @@ class Model:
                 f"nodes ({len(self.nodes)})"
             )
 
-        max_runtime = getattr(stopping_criterion, "max_runtime", None)
-        return self._solve_fixed_budget(
-            budget, stopping_criterion, seed, params,
-            effective_display_interval, display, collect_stats,
-            max_runtime if isinstance(max_runtime, (int, float)) else None,
+        original_graph: "CNP_Graph | DCNP_Graph"
+        if dcnp:
+            if not isinstance(distance, int) or distance < 1:
+                raise ValueError("distance must be a positive integer for DCNP")
+            if params.search != L2NS or params.crossover != RSC:
+                raise ValueError(
+                    f"the {CHNS} search and the {DBX} crossover support CNP only"
+                )
+            original_graph = self.problem_data.create_original_dcnp_graph(
+                budget, distance, seed
+            )
+        else:
+            original_graph = self.problem_data.create_original_graph(budget, seed)
+
+        config = self._build_config(
+            params, seed, effective_display_interval, stopping_criterion, dcnp
+        )
+        return self._run_solver(
+            original_graph, budget, config,
+            stopping_criterion, display, effective_display_interval,
+            collect_stats, dcnp=dcnp,
         )
 
     @staticmethod
@@ -365,144 +367,71 @@ class Model:
         }
         return replace(params, **overrides) if overrides else params
 
-    # Solve the CNP problem by calling _run_solver.
-    def _solve_fixed_budget(
-        self,
-        budget: int,
-        stopping_criterion: Callable[[float], bool],
-        seed: int,
+    @staticmethod
+    def _build_config(
         params: SolverParams,
-        effective_display_interval: float,
-        display: bool,
-        collect_stats: bool,
-        max_runtime: Optional[float],
-    ) -> Result:
-        """Run one CNDetector search at a fixed budget, minimizing the residual
-        pairwise connectivity of the graph.
+        seed: int,
+        display_interval: float,
+        stopping_criterion: Callable[[float], bool],
+        dcnp: bool,
+    ) -> "SolverConfig":
+        """Translate ``params`` into the native solver configuration.
 
-        When ``max_runtime`` (seconds) is positive it is pushed to the native
-        solver as a hard wall-clock deadline, so it can stop during population
-        initialization and within a single generation.
+        ``population_size``, ``interaction_period``,
+        ``allowable_idle_iterations`` and the ``l2ns_*`` fields left at
+        ``None`` take the tuned default of the problem being solved; explicit
+        values are used as given. A ``max_runtime`` attribute on the stopping
+        criterion becomes a hard wall-clock deadline of the native solver, so
+        it can also stop during population initialization and within a single
+        generation.
 
         Args:
-            budget: budget of nodes to remove
-            stopping_criterion: stopping criterion
-            seed: random seed
             params: solver parameters
-            effective_display_interval: effective display interval
-            display: whether to display progress
-            collect_stats: whether to collect statistics
-            max_runtime: maximum runtime
+            seed: random seed
+            display_interval: minimum seconds between progress log lines
+            stopping_criterion: stopping criterion, read for ``max_runtime``
+            dcnp: whether the DCNP defaults apply
 
         Returns:
-            The solve result.
+            The native solver configuration.
         """
         from ._cndetector import SolverConfig
 
-        # Create the original graph.
-        original_graph = self.problem_data.create_original_graph(
-            budget, seed
-        )
+        def problem_default(value: Optional[int], cnp: int, dcnp_value: int) -> int:
+            if value is not None:
+                return value
+            return dcnp_value if dcnp else cnp
 
-        # Configure the solver.
         config = SolverConfig()
-        config.population_size = params.population_size
+        config.population_size = problem_default(
+            params.population_size, DEFAULT_POPULATION_SIZE, _DCNP_POPULATION_SIZE
+        )
         config.thread_count = params.thread_count
-        config.stagnation_threshold = params.stagnation_threshold
-        config.interaction_period = params.interaction_period
-        config.seed = seed
+        config.interaction_period = problem_default(
+            params.interaction_period,
+            DEFAULT_INTERACTION_PERIOD, _DCNP_INTERACTION_PERIOD,
+        )
         config.relaxation_coefficient = params.relaxation_coefficient
-        config.backbone_rate = params.backbone_rate
-        config.display_interval = effective_display_interval
-        config.search = params.search
-        # gamma, and then the finer L2NS schedule overrides.
-        config.l2ns.allowable_idle_iterations = params.allowable_idle_iterations
-        _apply_l2ns_overrides(config, params)
-        if isinstance(max_runtime, (int, float)) and max_runtime > 0:
-            config.max_runtime = float(max_runtime)
-
-        return self._run_solver(
-            original_graph, budget, config,
-            stopping_criterion, display, effective_display_interval,
-            collect_stats,
-        )
-
-    def _solve_dcnp(
-        self,
-        budget: int,
-        distance: int,
-        stopping_criterion: Callable[[float], bool],
-        seed: int,
-        params: SolverParams,
-        effective_display_interval: float,
-        display: bool,
-        collect_stats: bool,
-    ) -> Result:
-        """Solve fixed-budget DCNP with the same search framework as CNP.
-
-        The objective is the number of unordered node pairs at distance at most
-        ``distance`` in the graph after removing ``budget`` nodes; lower is
-        better.
-
-        The flow is the same as for CNP: a main population of solutions with
-        ``budget`` nodes and an auxiliary population of solutions with
-        ``floor(k * (1 - alpha))`` nodes, each generation producing offspring
-        via the crossover plus local search and updating the population by
-        quality and diversity; every ``interaction_period`` generations the best
-        auxiliary solution is completed to the full budget and offered to the
-        main population. Only the parameter values differ.
-        """
-        from ._cndetector import SolverConfig
-
-        # Create the original DCNP graph.
-        original_graph = self.problem_data.create_original_dcnp_graph(
-            budget, distance, seed
-        )
-
-        # Switch to the DCNP parameter set wherever the caller left the knob at
-        # its CNP default.
-        dcnp_population_size = (
-            _DCNP_POPULATION_SIZE
-            if params.population_size == DEFAULT_POPULATION_SIZE
-            else params.population_size
-        )
-        dcnp_interaction_period = (
-            _DCNP_INTERACTION_PERIOD
-            if params.interaction_period == DEFAULT_INTERACTION_PERIOD
-            else params.interaction_period
-        )
-        dcnp_allowable_idle_iterations = (
-            _DCNP_ALLOWABLE_IDLE_ITERATIONS
-            if params.allowable_idle_iterations == DEFAULT_ALLOWABLE_IDLE_ITERATIONS
-            else params.allowable_idle_iterations
-        )
-
-        # Configure the solver (same as the CNP path).
-        config = SolverConfig()
-        config.population_size = dcnp_population_size
-        config.thread_count = params.thread_count
         config.stagnation_threshold = params.stagnation_threshold
-        config.interaction_period = dcnp_interaction_period
-        config.seed = seed
-        config.relaxation_coefficient = params.relaxation_coefficient
         config.backbone_rate = params.backbone_rate
-        config.display_interval = effective_display_interval
         config.search = params.search
+        config.crossover = params.crossover
+        config.seed = seed
+        config.display_interval = display_interval
 
-        # gamma, then the lighter local-search schedule; explicit
-        # params.l2ns_* values still take precedence.
-        config.l2ns.allowable_idle_iterations = dcnp_allowable_idle_iterations
-        _apply_l2ns_overrides(config, params, dcnp_defaults=_DCNP_L2NS_DEFAULTS)
+        # gamma, then the finer schedule overrides of the local search.
+        config.l2ns.allowable_idle_iterations = problem_default(
+            params.allowable_idle_iterations,
+            DEFAULT_ALLOWABLE_IDLE_ITERATIONS, _DCNP_ALLOWABLE_IDLE_ITERATIONS,
+        )
+        _apply_l2ns_overrides(
+            config, params, dcnp_defaults=_DCNP_L2NS_DEFAULTS if dcnp else None
+        )
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)
         if isinstance(max_runtime, (int, float)) and max_runtime > 0:
             config.max_runtime = float(max_runtime)
-
-        return self._run_solver(
-            original_graph, budget, config,
-            stopping_criterion, display, effective_display_interval,
-            collect_stats, dcnp=True,
-        )
+        return config
 
     def _run_solver(
         self,
@@ -531,12 +460,9 @@ class Model:
         Returns:
             The solve result.
         """
-        from ._cndetector import DCNPDualPopulation, DualPopulation, set_max_threads
+        from ._cndetector import DCNPDualPopulation, DualPopulation
 
         population_cls = DCNPDualPopulation if dcnp else DualPopulation
-
-        # kappa is the thread count: one worker per offspring of a generation.
-        set_max_threads(config.thread_count)
 
         start_time = time.perf_counter()
 
@@ -548,13 +474,11 @@ class Model:
             stopping_criterion.start_time = start_time
 
         # The auxiliary population holds solutions of floor(k * (1 - alpha))
-        # nodes, capped at k-1 so it stays strictly smaller than the main one
-        # (and >= 1 so the population has something to evolve). When k = 1 it
-        # falls back to 1, which equals the main budget.
-        auxiliary_budget = max(1, min(
-            math.floor(budget * (1.0 - config.relaxation_coefficient)),
-            budget - 1,
-        ))
+        # nodes, at least 1 so it has something to evolve. With alpha = 0 it
+        # carries k nodes and the two populations are homogeneous.
+        auxiliary_budget = max(
+            1, math.floor(budget * (1.0 - config.relaxation_coefficient))
+        )
 
         population = population_cls(
             original_graph, budget, auxiliary_budget, config,
@@ -573,20 +497,20 @@ class Model:
         best_obj_value = init_result[1]
         best_found_at_time = time.perf_counter() - start_time
 
-        printer.print_iterations_header()
+        printer.print_generations_header()
 
-        iterations = 0
+        generations = 0
         idle_generations = 0
         stats: list[dict] = []
 
         while not stopping_criterion(best_obj_value):
             population.advance_one_generation()
-            iterations += 1
+            generations += 1
 
             # Handle HPC events.
             for event in population.drain_hpc_events():
                 report = event.report
-                printer.hpc(event.iteration, {
+                printer.hpc(event.generation, {
                     "hpc_triggered": report.hpc_triggered,
                     "candidate_obj_value":
                         report.candidate_obj_value,
@@ -594,11 +518,11 @@ class Model:
                         report.improved_main_best,
                 })
 
-            # Handle iteration events.
-            for iter_event in population.drain_iteration_events():
+            # Handle generation events.
+            for gen_event in population.drain_generation_events():
                 elapsed = time.perf_counter() - start_time
-                if iter_event.best_objective < best_obj_value:
-                    best_obj_value = iter_event.best_objective
+                if gen_event.best_objective < best_obj_value:
+                    best_obj_value = gen_event.best_objective
                     best_found_at_time = elapsed
                     idle_generations = 0
                 else:
@@ -606,16 +530,16 @@ class Model:
 
                 if collect_stats:
                     stats.append({
-                        "iteration": iter_event.iteration,
+                        "generation": gen_event.generation,
                         "elapsed": elapsed,
                         "best_obj_value": best_obj_value,
                         "idle_generations": idle_generations,
-                        "population_size": iter_event.population_size,
+                        "population_size": gen_event.population_size,
                     })
 
-                printer.iteration(
-                    iter_event.iteration, elapsed, best_obj_value,
-                    idle_generations, iter_event.population_size,
+                printer.generation(
+                    gen_event.generation, elapsed, best_obj_value,
+                    idle_generations, gen_event.population_size,
                 )
 
         # Fetch the final solution.
@@ -634,7 +558,7 @@ class Model:
         result = Result(
             best_solution=best_solution,
             best_obj_value=best_obj_value,
-            num_iterations=iterations,
+            num_generations=generations,
             runtime=runtime,
             best_found_at_time=best_found_at_time,
             stats=stats if collect_stats else None,

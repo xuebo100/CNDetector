@@ -1,11 +1,13 @@
 #include "Population.h"
 
 #include "ParallelFor.h"
+#include "crossover/doubleBackboneBasedCrossover.h"
 #include "search/LocalSearch.h"
 
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
+#include <type_traits>
 
 template <typename GraphT>
 double DualPopulationT<GraphT>::computeSimilarity(const Solution &lhs, const Solution &rhs)
@@ -31,9 +33,19 @@ DualPopulationT<GraphT>::DualPopulationT(
       mainBudget_(mainBudget),
       auxiliaryBudget_(auxiliaryBudget),
       config_(std::move(config)),
+      search_(resolveLocalSearch(config_)),
+      crossover_(resolveCrossover(config_)),
       startTime_(startTime)
 {
-    config_.resolvedL2ns = resolveL2NSConfig(config_);
+    if constexpr (!std::is_same_v<GraphT, CNP_Graph>)
+    {
+        if (search_.strategy != SearchStrategy::L2NS
+            || crossover_ != CrossoverStrategy::RSC)
+        {
+            throw std::invalid_argument(
+                "the CHNS search and the DBX crossover support CNP only");
+        }
+    }
     deadline_ = config_.maxRuntime > 0.0
                     ? startTime_
                           + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -50,6 +62,7 @@ bool DualPopulationT<GraphT>::reachedDeadline() const
 template <typename GraphT>
 std::pair<Solution, int> DualPopulationT<GraphT>::initialize()
 {
+    cndetector::setSolverThreads(config_.threadCount);
     mainPopulation_.clear();
     auxiliaryPopulation_.clear();
     nextItemId_ = 0;
@@ -58,94 +71,12 @@ std::pair<Solution, int> DualPopulationT<GraphT>::initialize()
     mainSelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF001u));
     auxiliarySelectionRng_.setSeed(deterministicSeed(config_.seed, 0xF002u));
 
-    iterationEvents_.clear();
+    generationEvents_.clear();
     hpcEvents_.clear();
 
-    // Members are independent local-search runs with fixed per-member
-    // seeds, so one round generates the missing members of both populations in
-    // a single parallel region and appends them in a fixed order afterwards.
-    // A member is admitted only if it is distinct from the members already in
-    // its population, and rounds are repeated until both populations hold
-    // theta distinct individuals. The retry budget bounds the loop on graphs
-    // too small to admit theta distinct local optima. The member-0 solutions
-    // always run so neither population is ever left empty; later members are
-    // skipped once the time budget is exhausted.
-    struct InitJob
-    {
-        int budget;
-        int seed;
-        bool isMain;
-    };
-
-    const size_t targetSize = static_cast<size_t>(config_.populationSize);
-    const int maxRounds = config_.populationSize + 1;
-    for (int round = 0; round < maxRounds; ++round)
-    {
-        std::vector<InitJob> jobs;
-        size_t numMainJobs = 0;
-        for (size_t i = mainPopulation_.size(); i < targetSize; ++i)
-        {
-            ++numMainJobs;
-            jobs.push_back({mainBudget_,
-                            deterministicSeed(config_.seed, 0x1001u,
-                                              static_cast<uint64_t>(round),
-                                              static_cast<uint64_t>(i)),
-                            true});
-        }
-        for (size_t i = auxiliaryPopulation_.size(); i < targetSize; ++i)
-        {
-            jobs.push_back({auxiliaryBudget_,
-                            deterministicSeed(config_.seed, 0x1002u,
-                                              static_cast<uint64_t>(round),
-                                              static_cast<uint64_t>(i)),
-                            false});
-        }
-        if (jobs.empty())
-        {
-            break;
-        }
-
-        // In the first round the leading job of each population must run even
-        // past the deadline, so neither population is left empty.
-        const int firstMainJob = round == 0 && numMainJobs > 0 ? 0 : -1;
-        const int firstAuxiliaryJob = round == 0 && jobs.size() > numMainJobs
-            ? static_cast<int>(numMainJobs)
-            : -1;
-
-        std::vector<std::optional<std::pair<Solution, int>>> results(jobs.size());
-        cndetector::parallelFor(0, static_cast<int>(jobs.size()),
-                          [&](int k, int /*workerIdx*/)
-                          {
-                              if (k != firstMainJob && k != firstAuxiliaryJob
-                                  && reachedDeadline())
-                              {
-                                  return;
-                              }
-                              results[k] = generatePPIIndividual(jobs[k].budget,
-                                                                  jobs[k].seed);
-                          });
-
-        for (size_t k = 0; k < jobs.size(); ++k)
-        {
-            if (!results[k].has_value())
-            {
-                continue;
-            }
-            auto &population
-                = jobs[k].isMain ? mainPopulation_ : auxiliaryPopulation_;
-            if (population.size() >= targetSize
-                || isDuplicate(results[k]->first, population))
-            {
-                continue;
-            }
-            addSolution(population, results[k]->first, results[k]->second);
-        }
-
-        if (reachedDeadline())
-        {
-            break;
-        }
-    }
+    fillPopulations({{&mainPopulation_, mainBudget_, 0x1001u},
+                     {&auxiliaryPopulation_, auxiliaryBudget_, 0x1002u}},
+                    0);
 
     // Best solution of the main population.
     const auto &bestItem = getBestItem(mainPopulation_);
@@ -155,6 +86,7 @@ std::pair<Solution, int> DualPopulationT<GraphT>::initialize()
 template <typename GraphT>
 void DualPopulationT<GraphT>::advanceOneGeneration()
 {
+    cndetector::setSolverThreads(config_.threadCount);
     const int mainGeneration = mainGenerationCount_ + 1;
     const int auxiliaryGeneration = auxiliaryGenerationCount_ + 1;
 
@@ -209,7 +141,7 @@ void DualPopulationT<GraphT>::advanceOneGeneration()
         ++idleGenerations_;
     }
 
-    iterationEvents_.push_back(buildIterationEvent(mainGeneration));
+    generationEvents_.push_back(buildGenerationEvent(mainGeneration));
 }
 
 template <typename GraphT>
@@ -242,7 +174,7 @@ void DualPopulationT<GraphT>::applyBestOffspring(
 template <typename GraphT>
 void DualPopulationT<GraphT>::collectOffspringJobs(
     PopulationKind kind,
-    int iteration,
+    int generation,
     RandomNumberGenerator &rng,
     std::vector<OffspringJob> &jobs)
 {
@@ -261,7 +193,7 @@ void DualPopulationT<GraphT>::collectOffspringJobs(
         const uint64_t streamId = kind == PopulationKind::Main ? 0x2001u : 0x2002u;
         const int offspringSeed = deterministicSeed(
             config_.seed, streamId,
-            static_cast<uint64_t>(iteration), static_cast<uint64_t>(i));
+            static_cast<uint64_t>(generation), static_cast<uint64_t>(i));
 
         jobs.push_back({kind, selectRandomParents(population, rng),
                         targetBudget, offspringSeed});
@@ -269,14 +201,14 @@ void DualPopulationT<GraphT>::collectOffspringJobs(
 }
 
 template <typename GraphT>
-HPCReport DualPopulationT<GraphT>::runHPC(int iteration)
+HPCReport DualPopulationT<GraphT>::runHPC(int generation)
 {
     HPCReport report;
     report.hpcTriggered = true;
     const Solution bestAuxiliary = *getBestItem(auxiliaryPopulation_).solution;
 
     const int completionSeed = deterministicSeed(
-        config_.seed, 0x3001u, static_cast<uint64_t>(iteration));
+        config_.seed, 0x3001u, static_cast<uint64_t>(generation));
     const auto [completedSolution, completedObjValue]
         = completePartialSolution(bestAuxiliary, mainBudget_, completionSeed);
     report.candidateObjValue = completedObjValue;
@@ -291,14 +223,14 @@ HPCReport DualPopulationT<GraphT>::runHPC(int iteration)
     // generations, rebuild the auxiliary population and reset the counter.
     if (idleGenerations_ > config_.stagnationThreshold)
     {
-        runPR(iteration);
+        runPR(generation);
         idleGenerations_ = 0;
     }
     return report;
 }
 
 template <typename GraphT>
-void DualPopulationT<GraphT>::runPR(int iteration)
+void DualPopulationT<GraphT>::runPR(int generation)
 {
     // Keep the incumbent of the auxiliary population and replace the remaining
     // populationSize - 1 individuals with freshly initialized solutions.
@@ -306,42 +238,93 @@ void DualPopulationT<GraphT>::runPR(int iteration)
     const Solution keptSolution = *incumbent.solution;
     const int keptObjValue = incumbent.objValue;
 
-    const int replacements = std::max(0, config_.populationSize - 1);
-    std::vector<std::optional<std::pair<Solution, int>>> results(
-        static_cast<size_t>(replacements));
-    cndetector::parallelFor(0, replacements,
-                      [&](int k, int /*workerIdx*/)
-                      {
-                          if (reachedDeadline())
-                          {
-                              return;
-                          }
-                          results[static_cast<size_t>(k)] = generatePPIIndividual(
-                              auxiliaryBudget_,
-                              deterministicSeed(config_.seed, 0x4001u,
-                                                static_cast<uint64_t>(iteration),
-                                                static_cast<uint64_t>(k)));
-                      });
-
     auxiliaryPopulation_.clear();
     addSolution(auxiliaryPopulation_, keptSolution, keptObjValue);
-    for (const auto &result : results)
+    fillPopulations({{&auxiliaryPopulation_, auxiliaryBudget_, 0x4001u}}, generation);
+}
+
+template <typename GraphT>
+void DualPopulationT<GraphT>::fillPopulations(
+    const std::vector<FillTarget> &targets, int generation)
+{
+    // Each round generates the missing members of every target in one
+    // parallel region, then admits them in a fixed order when they are
+    // distinct from the members already present, so the outcome does not
+    // depend on the thread schedule. Rounds repeat until every target is full
+    // or has used its attempts. A target that is still empty always runs its
+    // first job, even past the deadline, so no population is ever left empty.
+    struct FillJob
     {
-        // As in PPI, a fresh individual joins P_a only if it is distinct from
-        // the individuals already there.
-        if (result.has_value()
-            && !isDuplicate(result->first, auxiliaryPopulation_))
+        size_t target;
+        int seed;
+        bool mandatory;
+    };
+
+    const size_t targetSize = static_cast<size_t>(config_.populationSize);
+    const int maxAttempts = FILL_ATTEMPTS_PER_MEMBER * config_.populationSize;
+    std::vector<int> attempts(targets.size(), 0);
+
+    for (size_t round = 0;; ++round)
+    {
+        std::vector<FillJob> jobs;
+        for (size_t t = 0; t < targets.size(); ++t)
         {
-            addSolution(auxiliaryPopulation_, result->first, result->second);
+            const PopulationItems &population = *targets[t].population;
+            const bool empty = population.empty();
+            for (size_t i = population.size();
+                 i < targetSize && attempts[t] < maxAttempts; ++i, ++attempts[t])
+            {
+                jobs.push_back({t,
+                                deterministicSeed(config_.seed, targets[t].streamId,
+                                                  static_cast<uint64_t>(generation),
+                                                  round * targetSize + i),
+                                empty && i == 0});
+            }
+        }
+        if (jobs.empty())
+        {
+            break;
+        }
+
+        std::vector<std::optional<std::pair<Solution, int>>> results(jobs.size());
+        cndetector::parallelFor(0, static_cast<int>(jobs.size()),
+                          [&](int k, int /*workerIdx*/)
+                          {
+                              if (!jobs[k].mandatory && reachedDeadline())
+                              {
+                                  return;
+                              }
+                              results[k] = generatePPIIndividual(
+                                  targets[jobs[k].target].budget, jobs[k].seed);
+                          });
+
+        for (size_t k = 0; k < jobs.size(); ++k)
+        {
+            if (!results[k].has_value())
+            {
+                continue;
+            }
+            PopulationItems &population = *targets[jobs[k].target].population;
+            if (population.size() >= targetSize
+                || isDuplicate(results[k]->first, population))
+            {
+                continue;
+            }
+            addSolution(population, results[k]->first, results[k]->second);
+        }
+
+        if (reachedDeadline())
+        {
+            break;
         }
     }
 }
 
 template <typename GraphT>
-IterationEvent DualPopulationT<GraphT>::buildIterationEvent(int iteration) const
+GenerationEvent DualPopulationT<GraphT>::buildGenerationEvent(int generation) const
 {
     return {
-        iteration,
+        generation,
         elapsedSeconds(),
         getBestItem(mainPopulation_).objValue,
         static_cast<int>(mainPopulation_.size()),
@@ -369,7 +352,7 @@ std::pair<Solution, int> DualPopulationT<GraphT>::generatePPIIndividual(int budg
         graph = originalGraph_.getRandomPartialGraph(budget, deterministicSeed(seed, 0x4002u));
     }
     const LocalSearchResult result
-        = runLocalSearch(*graph, deterministicSeed(seed, 0x4003u), config_.resolvedL2ns, deadline_);
+        = runLocalSearch(*graph, deterministicSeed(seed, 0x4003u), search_, deadline_);
     return {result.solution, result.objValue};
 }
 
@@ -381,10 +364,23 @@ std::pair<Solution, int> DualPopulationT<GraphT>::createOffspring(
 {
     auto parentPtrs = std::pair<const Solution *, const Solution *>(
         parents.first.get(), parents.second.get());
-    auto offspringGraph = reduceSolveCombine(
-        originalGraph_, parentPtrs, config_.backboneRate, targetBudget, seed, config_, deadline_);
+    std::unique_ptr<GraphT> offspringGraph;
+    if constexpr (std::is_same_v<GraphT, CNP_Graph>)
+    {
+        if (crossover_ == CrossoverStrategy::DBX)
+        {
+            offspringGraph = doubleBackboneBasedCrossover(
+                originalGraph_, parentPtrs, targetBudget.value_or(mainBudget_), seed);
+        }
+    }
+    if (!offspringGraph)
+    {
+        offspringGraph = reduceSolveCombine(
+            originalGraph_, parentPtrs, config_.backboneRate, targetBudget, seed,
+            search_, deadline_);
+    }
     const LocalSearchResult result
-        = runLocalSearch(*offspringGraph, seed + 10000, config_.resolvedL2ns, deadline_);
+        = runLocalSearch(*offspringGraph, seed + 10000, search_, deadline_);
     return {result.solution, result.objValue};
 }
 
@@ -417,14 +413,14 @@ std::pair<Solution, int> DualPopulationT<GraphT>::completePartialSolution(
     }
 
     LocalSearchResult result
-        = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x6003u), config_.resolvedL2ns, deadline_);
+        = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x6003u), search_, deadline_);
     Solution finalNodes = baseSolution;
     finalNodes.reserve(baseSolution.size() + result.solution.size());
     finalNodes.insert(result.solution.begin(), result.solution.end());
 
     auto improvedGraph = originalGraph_.clone();
     improvedGraph->updateGraphByRemovedNodes(finalNodes);
-    result = runLocalSearch(*improvedGraph, deterministicSeed(seed, 0x6004u), config_.resolvedL2ns, deadline_);
+    result = runLocalSearch(*improvedGraph, deterministicSeed(seed, 0x6004u), search_, deadline_);
     return {result.solution, result.objValue};
 }
 
@@ -566,17 +562,19 @@ void DualPopulationT<GraphT>::applyQDPU(
     int objValue,
     size_t maxPopulationSize)
 {
-    // Once the population is full, the offspring is discarded
-    // when it duplicates an existing individual or when its cost is no better
-    // than the cost of the current worst individual; otherwise it is admitted
-    // in place of the individual with the worst quality-diversity fitness.
-    if (population.size() >= maxPopulationSize && !population.empty())
+    // An offspring identical to an individual of the population is always
+    // discarded. Once the population is full, so is an offspring whose cost is
+    // worse than the cost of the current worst individual; any other offspring
+    // is admitted in place of the individual with the worst quality-diversity
+    // fitness.
+    if (isDuplicate(solution, population))
     {
-        if (isDuplicate(solution, population)
-            || objValue >= getWorstItem(population).objValue)
-        {
-            return;
-        }
+        return;
+    }
+    if (population.size() >= maxPopulationSize
+        && objValue > getWorstItem(population).objValue)
+    {
+        return;
     }
 
     addSolution(population, solution, objValue);
@@ -590,9 +588,15 @@ template <typename GraphT>
 typename DualPopulationT<GraphT>::ParentHandles DualPopulationT<GraphT>::selectRandomParents(
     const PopulationItems &population, RandomNumberGenerator &rng)
 {
-    if (population.size() < 2)
+    if (population.empty())
     {
-        throw std::runtime_error("Cannot select two parents from a population with size < 2");
+        throw std::runtime_error("Cannot select parents from an empty population");
+    }
+    if (population.size() == 1)
+    {
+        // Instances with a single distinct local optimum leave the population
+        // with one individual; recombine it with itself.
+        return {population[0].solution, population[0].solution};
     }
     const int first = rng.generateIndex(static_cast<int>(population.size()));
     int second = first;
@@ -604,10 +608,10 @@ typename DualPopulationT<GraphT>::ParentHandles DualPopulationT<GraphT>::selectR
 }
 
 template <typename GraphT>
-std::vector<IterationEvent> DualPopulationT<GraphT>::drainIterationEvents()
+std::vector<GenerationEvent> DualPopulationT<GraphT>::drainGenerationEvents()
 {
-    std::vector<IterationEvent> drained;
-    drained.swap(iterationEvents_);
+    std::vector<GenerationEvent> drained;
+    drained.swap(generationEvents_);
     return drained;
 }
 

@@ -4,6 +4,7 @@
 #include "Population.h"
 #include "ProblemData.h"
 #include "crossover/reduceSolveCombine.h"
+#include "search/CHNSSearch.h"
 #include "search/L2NSSearch.h"
 #include "search/DCNPSearch.h"
 
@@ -155,7 +156,7 @@ PYBIND11_MODULE(_cndetector, m)
                      py::gil_scoped_release release;
                      self.advanceOneGeneration();
                  })
-            .def("drain_iteration_events", &PopulationT::drainIterationEvents)
+            .def("drain_generation_events", &PopulationT::drainGenerationEvents)
             .def("drain_hpc_events", &PopulationT::drainHPCEvents)
             .def("get_best_solution",
                  [](const PopulationT &self)
@@ -192,7 +193,9 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("display_interval", &SolverConfig::displayInterval)
         .def_readwrite("max_runtime", &SolverConfig::maxRuntime)
         .def_readwrite("search", &SolverConfig::search)
-        .def_readwrite("l2ns", &SolverConfig::l2ns);
+        .def_readwrite("crossover", &SolverConfig::crossover)
+        .def_readwrite("l2ns", &SolverConfig::l2ns)
+        .def_readwrite("chns", &SolverConfig::chns);
 
     // L2NSConfig
     py::class_<L2NSConfig>(m, "L2NSConfig")
@@ -202,24 +205,25 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("max_destroy_size", &L2NSConfig::maxDestroySize)
         .def_readwrite("idle_iteration_cap", &L2NSConfig::idleIterationCap)
         .def_readwrite("idle_iteration_floor", &L2NSConfig::idleIterationFloor)
-        .def_readwrite("impact_selection_rate", &L2NSConfig::impactSelectionRate)
-        .def_readwrite("randomize_destroy_size", &L2NSConfig::randomizeDestroySize)
-        .def_readwrite("adaptive_max_idle_iterations",
-                       &L2NSConfig::adaptiveMaxIdleIterations)
-        .def_readwrite("adaptive_min_destroy_size",
-                       &L2NSConfig::adaptiveMinDestroySize)
-        .def_readwrite("adaptive_max_destroy_size",
-                       &L2NSConfig::adaptiveMaxDestroySize)
-        .def_readwrite("adaptive_growth_interval",
-                       &L2NSConfig::adaptiveGrowthInterval);
+        .def_readwrite("impact_selection_rate", &L2NSConfig::impactSelectionRate);
 
-    // IterationEvent
-    py::class_<IterationEvent>(m, "IterationEvent")
+    // CHNSConfig
+    py::class_<CHNSConfig>(m, "CHNSConfig")
         .def(py::init<>())
-        .def_readwrite("iteration", &IterationEvent::iteration)
-        .def_readwrite("elapsed", &IterationEvent::elapsed)
-        .def_readwrite("best_objective", &IterationEvent::bestObjective)
-        .def_readwrite("population_size", &IterationEvent::populationSize);
+        .def_readwrite("allowable_idle_iterations", &CHNSConfig::allowableIdleIterations)
+        .def_readwrite("min_destroy_size", &CHNSConfig::minDestroySize)
+        .def_readwrite("max_destroy_size", &CHNSConfig::maxDestroySize)
+        .def_readwrite("idle_iteration_cap", &CHNSConfig::idleIterationCap)
+        .def_readwrite("idle_iteration_floor", &CHNSConfig::idleIterationFloor)
+        .def_readwrite("impact_selection_rate", &CHNSConfig::impactSelectionRate);
+
+    // GenerationEvent
+    py::class_<GenerationEvent>(m, "GenerationEvent")
+        .def(py::init<>())
+        .def_readwrite("generation", &GenerationEvent::generation)
+        .def_readwrite("elapsed", &GenerationEvent::elapsed)
+        .def_readwrite("best_objective", &GenerationEvent::bestObjective)
+        .def_readwrite("population_size", &GenerationEvent::populationSize);
 
     // HPCReport
     py::class_<HPCReport>(m, "HPCReport")
@@ -231,7 +235,7 @@ PYBIND11_MODULE(_cndetector, m)
     // HPCEvent
     py::class_<HPCEvent>(m, "HPCEvent")
         .def(py::init<>())
-        .def_readwrite("iteration", &HPCEvent::iteration)
+        .def_readwrite("generation", &HPCEvent::generation)
         .def_readwrite("report", &HPCEvent::report);
 
     // LocalSearchResult
@@ -250,6 +254,14 @@ PYBIND11_MODULE(_cndetector, m)
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
+    m.def("run_chns",
+          [](CNP_Graph &graph, int seed, const CHNSConfig &config)
+          {
+              py::gil_scoped_release release;
+              return runCHNS(graph, seed, config);
+          },
+          py::arg("graph"), py::arg("seed"), py::arg("config"));
+
     m.def("run_dcnp_l2ns",
           [](DCNP_Graph &graph, int seed, const L2NSConfig &config)
           {
@@ -258,13 +270,13 @@ PYBIND11_MODULE(_cndetector, m)
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
-    m.def("resolve_l2ns_config", &resolveL2NSConfig, py::arg("config"));
 
     m.def("set_max_threads", &cndetector::setMaxThreads, py::arg("count"),
-          "Cap the solver's worker threads (0 restores the hardware default). "
-          "Results are identical for any thread count.");
+          "Bound the number of worker threads the solver may use (0 removes "
+          "the bound). The search is defined by thread_count (kappa), so the "
+          "returned solutions do not depend on this bound.");
     m.def("get_max_threads", &cndetector::maxThreads,
-          "Effective worker-thread cap currently in use.");
+          "Number of worker threads the solver currently runs on.");
 
     m.def("deterministic_seed", &deterministicSeed,
           py::arg("base_seed"), py::arg("stream_id"),

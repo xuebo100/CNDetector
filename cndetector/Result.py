@@ -15,7 +15,7 @@ class Result:
 
     best_solution: Set[int] = field(default_factory=set)
     best_obj_value: float = math.inf
-    num_iterations: int = 0
+    num_generations: int = 0
     runtime: float = 0.0
     best_found_at_time: float = 0.0
     stats: Optional[list[dict]] = None

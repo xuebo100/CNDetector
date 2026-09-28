@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
+#include <initializer_list>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -13,8 +14,12 @@ namespace cndetector
 
 namespace detail
 {
-/// Process-wide thread cap set by setMaxThreads (0 = auto/hardware).
-inline std::atomic<int> gMaxThreads{0};
+/// Worker threads requested by the running search, i.e. its thread count
+/// kappa (0 = not set).
+inline std::atomic<int> gSolverThreads{0};
+
+/// Upper bound on the worker threads set by the user (0 = no bound).
+inline std::atomic<int> gUserMaxThreads{0};
 
 /// Extra worker threads currently alive across all parallelFor regions.
 /// Nested regions consult this budget, so an inner loop running inside an
@@ -45,20 +50,35 @@ inline void releaseExtraThreads(int count)
 }
 }  // namespace detail
 
-/// Set the process-wide parallelism cap (0 restores the hardware default).
-inline void setMaxThreads(int count)
+/// Set the number of worker threads the running search asks for, i.e. its
+/// thread count kappa (0 clears the request).
+inline void setSolverThreads(int count)
 {
-    detail::gMaxThreads.store(count <= 0 ? 0 : count);
+    detail::gSolverThreads.store(count <= 0 ? 0 : count);
 }
 
-/// Effective parallelism cap: min(configured, hardware), at least 1.
+/// Bound the number of worker threads from above (0 removes the bound). The
+/// search itself is defined by kappa, so this changes wall-clock time only.
+inline void setMaxThreads(int count)
+{
+    detail::gUserMaxThreads.store(count <= 0 ? 0 : count);
+}
+
+/// Effective number of worker threads: the smallest of the search's request,
+/// the user's bound and the hardware concurrency, and at least 1.
 inline int maxThreads()
 {
     const int hardware
         = static_cast<int>(std::thread::hardware_concurrency());
-    const int base = hardware > 0 ? hardware : 1;
-    const int cap = detail::gMaxThreads.load();
-    return cap > 0 ? std::min(cap, base) : base;
+    int threads = hardware > 0 ? hardware : 1;
+    for (const int bound : {detail::gSolverThreads.load(), detail::gUserMaxThreads.load()})
+    {
+        if (bound > 0)
+        {
+            threads = std::min(threads, bound);
+        }
+    }
+    return threads;
 }
 
 /**

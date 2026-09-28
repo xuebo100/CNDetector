@@ -1,7 +1,6 @@
 #include "reduceSolveCombine.h"
 #include "../Graph/DCNP_Graph.h"
 #include "../RandomNumberGenerator.h"
-#include "../search/LocalSearch.h"
 #include <stdexcept>
 
 uint64_t splitmix64(uint64_t value)
@@ -24,37 +23,41 @@ int deterministicSeed(
     return seed == 0 ? 1 : seed;
 }
 
-L2NSConfig resolveL2NSConfig(const SolverConfig &config)
+LocalSearchSettings resolveLocalSearch(const SolverConfig &config)
 {
-    L2NSConfig resolved = config.l2ns;
-
+    LocalSearchSettings settings;
+    settings.l2ns = config.l2ns;
+    settings.chns = config.chns;
     if (config.search == "L2NS")
     {
-        resolved.randomizeDestroySize = true;
-        return resolved;
+        settings.strategy = SearchStrategy::L2NS;
     }
-
-    if (config.search == "L2NS-ADAPT")
+    else if (config.search == "CHNS")
     {
-        resolved.randomizeDestroySize = false;
-        return resolved;
+        settings.strategy = SearchStrategy::CHNS;
     }
-
-    if (config.search.rfind("L2NS", 0) == 0 && config.search.size() > 4)
+    else
     {
-        const int fixedBatchSize = std::stoi(config.search.substr(4));
-        if (fixedBatchSize <= 0)
-        {
-            throw std::runtime_error("L2NS fixed batch size must be positive");
-        }
-        resolved.randomizeDestroySize = false;
-        resolved.adaptiveMinDestroySize = fixedBatchSize;
-        resolved.adaptiveMaxDestroySize = fixedBatchSize;
-        return resolved;
+        throw std::invalid_argument(
+            "unsupported search strategy \"" + config.search
+            + "\"; expected \"L2NS\" or \"CHNS\"");
     }
+    return settings;
+}
 
-    throw std::runtime_error(
-        "Unsupported search strategy: " + config.search);
+CrossoverStrategy resolveCrossover(const SolverConfig &config)
+{
+    if (config.crossover == "RSC")
+    {
+        return CrossoverStrategy::RSC;
+    }
+    if (config.crossover == "DBX")
+    {
+        return CrossoverStrategy::DBX;
+    }
+    throw std::invalid_argument(
+        "unsupported crossover \"" + config.crossover
+        + "\"; expected \"RSC\" or \"DBX\"");
 }
 
 template <typename GraphT>
@@ -64,7 +67,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
     double backboneRate,
     std::optional<int> targetBudget,
     int seed,
-    const SolverConfig &config,
+    const LocalSearchSettings &search,
     Deadline deadline)
 {
     if (backboneRate < 0.0 || backboneRate > 1.0)
@@ -124,7 +127,7 @@ std::unique_ptr<GraphT> reduceSolveCombine(
 
     const LocalSearchResult result
         = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x5003u),
-                         config.resolvedL2ns, deadline);
+                         search, deadline);
 
     Solution finalNodes = nodesToRemove;
     finalNodes.insert(result.solution.begin(), result.solution.end());
@@ -137,9 +140,9 @@ std::unique_ptr<GraphT> reduceSolveCombine(
 template std::unique_ptr<CNP_Graph> reduceSolveCombine<CNP_Graph>(
     const CNP_Graph &,
     const std::pair<const Solution *, const Solution *> &,
-    double, std::optional<int>, int, const SolverConfig &, Deadline);
+    double, std::optional<int>, int, const LocalSearchSettings &, Deadline);
 
 template std::unique_ptr<DCNP_Graph> reduceSolveCombine<DCNP_Graph>(
     const DCNP_Graph &,
     const std::pair<const Solution *, const Solution *> &,
-    double, std::optional<int>, int, const SolverConfig &, Deadline);
+    double, std::optional<int>, int, const LocalSearchSettings &, Deadline);

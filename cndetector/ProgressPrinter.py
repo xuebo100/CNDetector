@@ -19,7 +19,6 @@ class ProgressPrinter:
         self._logger = logger
         self._display_interval = display_interval
         self._last_print_time = time.perf_counter()
-        self._last_printed_iteration = 0
         self._current_best = float("inf")
 
     def start(self, budget: int, seed: int) -> None:
@@ -37,20 +36,20 @@ class ProgressPrinter:
         )
         self._last_print_time = time.perf_counter()
 
-    def print_iterations_header(self) -> None:
+    def print_generations_header(self) -> None:
         if not self._should_print:
             return
         self._logger.info(
-            "--------------------Starting Population Iterations--------------------"
+            "-------------------------Starting Generations-------------------------"
         )
         self._logger.info(
-            "  Iter        | Time        | Best        | Idle    | PopSize"
+            "  Gen         | Time        | Best        | Idle    | PopSize"
         )
         self._last_print_time = time.perf_counter()
 
-    def iteration(
+    def generation(
         self,
-        iteration: int,
+        generation: int,
         elapsed: float,
         best_obj: int,
         idle_gens: int,
@@ -67,25 +66,24 @@ class ProgressPrinter:
         self._current_best = min(self._current_best, best_obj)
 
         self._logger.info(
-            "%sIter %5d | Time: %6.2fs | Best: %-10d | Idle: %4d | PopSize: %3d",
+            "%sGen  %5d | Time: %6.2fs | Best: %-10d | Idle: %4d | PopSize: %3d",
             indicator,
-            iteration,
+            generation,
             elapsed,
             best_obj,
             idle_gens,
             pop_size,
         )
         self._last_print_time = now
-        self._last_printed_iteration = iteration
 
-    def hpc(self, iteration: int, report: dict) -> None:
+    def hpc(self, generation: int, report: dict) -> None:
         if not self._should_print:
             return
         if not report.get("hpc_triggered", False):
             return
         self._logger.info(
-            "[HPC] Iter %5d | Candidate obj: %10d | Improved best: %s",
-            iteration,
+            "[HPC] Gen  %5d | Candidate obj: %10d | Improved best: %s",
+            generation,
             report.get("candidate_obj_value", -1),
             "yes" if report.get("improved_main_best", False) else "no",
         )
@@ -97,7 +95,7 @@ class ProgressPrinter:
             "----------------------------------------------------------------------"
         )
         self._logger.info("CNDetector finished.")
-        self._logger.info("  Total iterations: %d", result.num_iterations)
+        self._logger.info("  Total generations: %d", result.num_generations)
         self._logger.info("  Total runtime: %.2f seconds", result.runtime)
         self._logger.info("  Best objective: %d", result.best_obj_value)
         self._logger.info("  Solution size: %d", len(result.best_solution))

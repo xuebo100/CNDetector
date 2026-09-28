@@ -477,6 +477,165 @@ ComponentIndex CNP_Graph::selectRemovedComponent() const
     return largeComponents[rng_.generateIndex(largeComponents.size())];
 }
 
+ComponentIndex CNP_Graph::selectRemovedComponentCHNS() const
+{
+    const size_t numComponents = connectedComponents_.size();
+    if (numComponents > 50)
+    {
+        return selectLargerComponentCHNS();
+    }
+
+    // Size range over the components of more than two nodes.
+    int minSize = numNodes_;
+    int maxSize = 0;
+    for (size_t i = 0; i < numComponents; ++i)
+    {
+        const size_t size = connectedComponents_[i].size();
+        if (size > 2)
+        {
+            minSize = std::min(minSize, static_cast<int>(size));
+            maxSize = std::max(maxSize, static_cast<int>(size));
+        }
+    }
+
+    // Midpoint of that range, lowered by a random 0, 1 or 2.
+    const double sizeThreshold
+        = maxSize - (maxSize - minSize) * 0.5 - rng_.generateIndex(3);
+
+    std::vector<ComponentIndex> largeComponents;
+    largeComponents.reserve(numComponents);
+    for (size_t i = 0; i < numComponents; ++i)
+    {
+        if (connectedComponents_[i].size() >= sizeThreshold)
+        {
+            largeComponents.push_back(static_cast<ComponentIndex>(i));
+        }
+    }
+
+    if (largeComponents.empty())
+    {
+        ComponentIndex fallbackIndex = 0;
+        size_t fallbackSize = 0;
+        for (size_t i = 0; i < numComponents; ++i)
+        {
+            const size_t size = connectedComponents_[i].size();
+            if (size > fallbackSize)
+            {
+                fallbackSize = size;
+                fallbackIndex = static_cast<ComponentIndex>(i);
+            }
+        }
+        return fallbackIndex;
+    }
+
+    return largeComponents[rng_.generateIndex(largeComponents.size())];
+}
+
+ComponentIndex CNP_Graph::selectLargerComponentCHNS() const
+{
+    const size_t totalSize = numNodes_ - removedNodes.size();
+    const size_t numComponents = connectedComponents_.size();
+
+    // Components larger than the average component size (at least 2).
+    const size_t avgComponentSize = std::max(
+        static_cast<size_t>(2),
+        static_cast<size_t>(std::round(static_cast<float>(totalSize)
+                                       / static_cast<float>(numComponents))));
+
+    std::vector<ComponentIndex> largeComponents;
+    std::vector<size_t> componentSizes;
+    largeComponents.reserve(numComponents);
+    componentSizes.reserve(numComponents);
+
+    size_t totalNodesInBigComponents = 0;
+    size_t maxSize = 0;
+    size_t maxIndex = 0;
+    size_t secondMaxSize = 0;
+    size_t secondMaxIndex = 0;
+
+    for (size_t i = 0; i < numComponents; ++i)
+    {
+        const size_t currentSize = connectedComponents_[i].size();
+        if (currentSize > avgComponentSize)
+        {
+            largeComponents.push_back(static_cast<ComponentIndex>(i));
+            componentSizes.push_back(currentSize);
+            totalNodesInBigComponents += currentSize;
+
+            if (currentSize > maxSize)
+            {
+                secondMaxSize = maxSize;
+                secondMaxIndex = maxIndex;
+                maxSize = currentSize;
+                maxIndex = i;
+            }
+            else if (currentSize > secondMaxSize)
+            {
+                secondMaxSize = currentSize;
+                secondMaxIndex = i;
+            }
+        }
+    }
+
+    if (largeComponents.empty())
+    {
+        size_t fallbackIndex = 0;
+        size_t fallbackSize = 0;
+        for (size_t i = 0; i < numComponents; ++i)
+        {
+            const size_t currentSize = connectedComponents_[i].size();
+            if (currentSize > fallbackSize)
+            {
+                fallbackSize = currentSize;
+                fallbackIndex = i;
+            }
+        }
+        if (fallbackSize == 0)
+        {
+            throw std::runtime_error("no components available for selection");
+        }
+        return static_cast<ComponentIndex>(fallbackIndex);
+    }
+
+    // With a single above-average component, secondMaxIndex is never
+    // assigned, so half of the draws return component 0. Kept as in the
+    // original CHNS so that CHNS and the double-backbone crossover behave as
+    // they did.
+    if (largeComponents.size() == 1)
+    {
+        return rng_.generateBool(0.5) ? static_cast<ComponentIndex>(secondMaxIndex)
+                                      : largeComponents[0];
+    }
+
+    // Otherwise pick a component with probability proportional to its size.
+    const int index = rng_.generateIndex(static_cast<int>(totalNodesInBigComponents));
+    size_t sum = 0;
+    for (size_t i = 0; i < largeComponents.size(); ++i)
+    {
+        sum += componentSizes[i];
+        if (static_cast<size_t>(index) < sum)
+        {
+            return largeComponents[i];
+        }
+    }
+    return largeComponents.back();
+}
+
+Node CNP_Graph::randomSelectNodeFromComponent(ComponentIndex componentIndex) const
+{
+    const auto &component = connectedComponents_[componentIndex];
+    if (component.nodes.empty())
+    {
+        throw std::runtime_error("component is empty, can not select node");
+    }
+    return component.nodes[rng_.generateIndex(component.size())];
+}
+
+void CNP_Graph::reseed(int seed)
+{
+    rng_.setSeed(seed);
+}
+
 Node CNP_Graph::ageSelectNodeFromComponent(ComponentIndex componentIndex) const
 {
     const auto &component = connectedComponents_[componentIndex];

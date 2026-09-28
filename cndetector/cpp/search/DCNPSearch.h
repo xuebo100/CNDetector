@@ -5,12 +5,13 @@
 #include "L2NSSearch.h"
 
 // DCNP counterparts of the two L2NS operators. The residual graph of the DCNP
-// has no meaningful connected components, so the destroy operator picks the
-// node with the largest b-hop-tree impact instead of a node from a large
-// connected component; the repair operator is the same greedy reinsertion.
+// has no meaningful connected components, so instead of drawing from a large
+// connected component the destroy operator removes, with probability
+// impactSelectionRate, the node whose removal cuts the most b-hop pairs, and a
+// random node otherwise; the repair operator is the same greedy reinsertion.
 int dcnpDestroy(
     DCNP_Graph &graph, int destroySize, RandomNumberGenerator &rng,
-    const L2NSConfig &l2ns, long step);
+    double impactSelectionRate, long step);
 
 void dcnpGreedyRepair(DCNP_Graph &graph, int numNodes, long step);
 

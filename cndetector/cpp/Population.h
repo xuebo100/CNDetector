@@ -17,6 +17,12 @@
 // 1 - QUALITY_WEIGHT.
 constexpr double QUALITY_WEIGHT = 0.7;
 
+// Initialization and reconstruction keep generating fresh local optima until a
+// population holds populationSize distinct individuals, giving up after
+// FILL_ATTEMPTS_PER_MEMBER * populationSize attempts on instances that have
+// fewer distinct local optima than that.
+constexpr int FILL_ATTEMPTS_PER_MEMBER = 20;
+
 struct PopulationItem
 {
     std::shared_ptr<const Solution> solution;
@@ -34,9 +40,9 @@ struct HPCReport
     bool improvedMainBest = false;
 };
 
-struct IterationEvent
+struct GenerationEvent
 {
-    int iteration = 0;
+    int generation = 0;
     double elapsed = 0.0;
     int bestObjective = std::numeric_limits<int>::max();
     int populationSize = 0;
@@ -44,7 +50,7 @@ struct IterationEvent
 
 struct HPCEvent
 {
-    int iteration = 0;
+    int generation = 0;
     HPCReport report;
 };
 
@@ -71,7 +77,7 @@ public:
     // generations.
     void advanceOneGeneration();
 
-    std::vector<IterationEvent> drainIterationEvents();
+    std::vector<GenerationEvent> drainGenerationEvents();
     std::vector<HPCEvent> drainHPCEvents();
 
     std::pair<Solution, int> getBestSolution() const;
@@ -102,7 +108,7 @@ private:
 
     // Pick the threadCount parent pairs of one generation, one per offspring.
     void collectOffspringJobs(PopulationKind kind,
-                              int iteration,
+                              int generation,
                               RandomNumberGenerator &rng,
                               std::vector<OffspringJob> &jobs);
     // Take the cheapest of the generation's offspring and offer it to the
@@ -113,11 +119,23 @@ private:
                             const std::vector<std::pair<Solution, int>> &results);
     // Heterogeneous population cooperation: complete the best solution of the
     // auxiliary population to the full budget and offer it to the main one.
-    HPCReport runHPC(int iteration);
+    HPCReport runHPC(int generation);
     // Population reconstruction: rebuild the auxiliary population, keeping only
     // its incumbent.
-    void runPR(int iteration);
-    IterationEvent buildIterationEvent(int iteration) const;
+    void runPR(int generation);
+
+    // A population to top up, with the size of its solutions and the random
+    // stream its fresh members are drawn from.
+    struct FillTarget
+    {
+        PopulationItems *population;
+        int budget;
+        uint64_t streamId;
+    };
+    // Top up every target to populationSize distinct individuals built like
+    // PPI members; see FILL_ATTEMPTS_PER_MEMBER for the attempt bound.
+    void fillPopulations(const std::vector<FillTarget> &targets, int generation);
+    GenerationEvent buildGenerationEvent(int generation) const;
     double elapsedSeconds() const;
     bool reachedDeadline() const;
 
@@ -141,10 +159,11 @@ private:
     void addSolution(PopulationItems &population, const Solution &solution, int objValue);
     void updateFitness(PopulationItems &population) const;
     void removeWorstSolution(PopulationItems &population) const;
-    // Quality-diversity population updating: reject the offspring when it
-    // duplicates an individual of the population or is not better than the
-    // population's worst cost; otherwise admit it in place of the individual
-    // with the worst quality-diversity fitness.
+    // Quality-diversity population updating: discard the offspring when it
+    // duplicates an individual of the population, or when the population is
+    // full and its cost is worse than the population's worst cost; otherwise
+    // admit it in place of the individual with the worst quality-diversity
+    // fitness.
     void applyQDPU(
         PopulationItems &population,
         const Solution &solution,
@@ -159,9 +178,12 @@ private:
     int mainBudget_;
     int auxiliaryBudget_;
     SolverConfig config_;
+    // config_.search and config_.crossover, parsed once at construction.
+    LocalSearchSettings search_;
+    CrossoverStrategy crossover_;
     PopulationItems mainPopulation_;
     PopulationItems auxiliaryPopulation_;
-    std::vector<IterationEvent> iterationEvents_;
+    std::vector<GenerationEvent> generationEvents_;
     std::vector<HPCEvent> hpcEvents_;
     // Generations since the incumbent of the main population last improved.
     int idleGenerations_ = 0;

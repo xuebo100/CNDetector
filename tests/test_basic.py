@@ -62,7 +62,7 @@ def test_solve_small_graph():
     )
     assert len(result.best_solution) == 2
     assert result.best_obj_value >= 0
-    assert result.num_iterations == 5
+    assert result.num_generations == 5
 
 
 def test_solve_rejects_invalid_budget():
@@ -118,7 +118,7 @@ def test_max_runtime_criterion():
         display=False,
     )
     assert result.runtime >= 0.2 - 0.05  # allow small slack
-    assert result.num_iterations >= 1
+    assert result.num_generations >= 1
 
 
 def test_max_runtime_does_not_overshoot():
@@ -149,7 +149,7 @@ def test_no_improvement_criterion_stops():
         seed=1,
         display=False,
     )
-    assert result.num_iterations >= 1
+    assert result.num_generations >= 1
 
 
 def test_solver_params_validation():
@@ -207,7 +207,7 @@ def test_result_stats_collected_by_default():
     )
     assert result.stats is not None
     assert len(result.stats) >= 1
-    assert {"iteration", "best_obj_value"}.issubset(result.stats[0].keys())
+    assert {"generation", "best_obj_value"}.issubset(result.stats[0].keys())
 
 
 def test_result_stats_disabled():
@@ -357,3 +357,176 @@ def test_read_dimacs_edge_format(tmp_path):
     auto_data = cndetector.read(str(graph_file))
     assert auto_data.num_nodes() == 3
     assert auto_data.get_adj_list()[1] == {0, 2}
+
+
+def _sparse_model(num_nodes: int = 80) -> Model:
+    """Return a fixed sparse graph large enough to exercise the search."""
+    model = Model()
+    for i in range(num_nodes):
+        model.add_edge(i, (i + 1) % num_nodes)
+        chord = (7 * i + 3) % num_nodes
+        if chord != i:
+            model.add_edge(i, chord)
+    return model
+
+
+def _spy_on_population(monkeypatch) -> dict:
+    """Record the budgets and configuration handed to the native population."""
+    import cndetector._cndetector as native
+
+    captured: dict = {}
+    for name in ("DualPopulation", "DCNPDualPopulation"):
+        real = getattr(native, name)
+
+        def factory(graph, main_budget, auxiliary_budget, config, _real=real):
+            captured.update(
+                main_budget=main_budget,
+                auxiliary_budget=auxiliary_budget,
+                config=config,
+            )
+            return _real(graph, main_budget, auxiliary_budget, config)
+
+        monkeypatch.setattr(native, name, factory)
+    return captured
+
+
+def test_zero_relaxation_makes_the_populations_homogeneous(monkeypatch):
+    captured = _spy_on_population(monkeypatch)
+    model = _cycle_with_chords_model()
+
+    model.solve(budget=3, stopping_criterion=MaxGenerations(1), display=False)
+    assert captured["auxiliary_budget"] == 2  # floor(3 * 0.95)
+
+    model.solve(
+        budget=3,
+        stopping_criterion=MaxGenerations(1),
+        params=SolverParams(relaxation_coefficient=0.0),
+        display=False,
+    )
+    assert captured["auxiliary_budget"] == captured["main_budget"] == 3
+
+
+def test_dcnp_defaults_apply_only_to_unset_parameters(monkeypatch):
+    captured = _spy_on_population(monkeypatch)
+    model = _cycle_with_chords_model()
+
+    def tuned(params=None):
+        model.solve(
+            problem="DCNP", budget=2, distance=2,
+            stopping_criterion=MaxGenerations(1), params=params, display=False,
+        )
+        config = captured["config"]
+        return (
+            config.population_size,
+            config.interaction_period,
+            config.l2ns.allowable_idle_iterations,
+        )
+
+    assert tuned() == (4, 5, 100)
+    # Values that happen to equal the CNP defaults are still used as given.
+    explicit = SolverParams(
+        population_size=10, interaction_period=20, allowable_idle_iterations=1000,
+    )
+    assert tuned(explicit) == (10, 20, 1000)
+
+
+def test_thread_cap_does_not_change_the_result():
+    model = _sparse_model()
+    outcomes = []
+    try:
+        for cap in (1, 3):
+            cndetector.set_max_threads(cap)
+            result = model.solve(
+                budget=8,
+                stopping_criterion=MaxGenerations(6),
+                seed=4,
+                params=SolverParams(thread_count=3),
+                display=False,
+            )
+            assert cndetector.get_max_threads() <= cap
+            outcomes.append((
+                sorted(result.best_solution),
+                [entry["best_obj_value"] for entry in result.stats],
+                result.main_population,
+            ))
+    finally:
+        cndetector.set_max_threads(0)
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize(
+    ("search", "crossover"),
+    [("CHNS", "RSC"), ("L2NS", "DBX"), ("CHNS", "DBX")],
+)
+def test_chns_and_dbx_solve_cnp(search, crossover):
+    model = _sparse_model()
+
+    def run():
+        return model.solve(
+            budget=8,
+            stopping_criterion=MaxGenerations(4),
+            seed=2,
+            params=SolverParams(search=search, crossover=crossover),
+            display=False,
+        )
+
+    first, second = run(), run()
+    assert len(first.best_solution) == 8
+    assert all(len(solution) == 8 for solution, _ in first.main_population)
+    assert first.best_solution == second.best_solution
+
+
+@pytest.mark.parametrize(
+    "params", [SolverParams(search="CHNS"), SolverParams(crossover="DBX")]
+)
+def test_chns_and_dbx_reject_dcnp(params):
+    with pytest.raises(ValueError, match="CNP only"):
+        _path_model(4).solve(
+            problem="DCNP", budget=1, distance=2,
+            stopping_criterion=MaxGenerations(1), params=params, display=False,
+        )
+
+
+def test_unknown_search_or_crossover_is_rejected():
+    with pytest.raises(ValueError):
+        SolverParams(search="L2NS-ADAPT")
+    with pytest.raises(ValueError):
+        SolverParams(crossover="IRR")
+
+    from cndetector._cndetector import DualPopulation, SolverConfig
+
+    config = SolverConfig()
+    config.search = "L2NS5"
+    graph = _cycle_with_chords_model().problem_data.create_original_graph(2, 1)
+    with pytest.raises(ValueError):
+        DualPopulation(graph, 2, 1, config)
+
+
+def test_populations_never_hold_duplicate_solutions():
+    # A 12-node ring with k = 3 has only four optimal solutions (every fourth
+    # node), fewer than the population size of six, so the local search keeps
+    # rediscovering the same solutions; none of them may enter twice.
+    model = Model()
+    for i in range(12):
+        model.add_edge(i, (i + 1) % 12)
+    result = model.solve(
+        budget=3,
+        stopping_criterion=MaxGenerations(30),
+        seed=1,
+        params=SolverParams(population_size=6),
+        display=False,
+    )
+    solutions = [frozenset(solution) for solution, _ in result.main_population]
+    assert len(solutions) == len(set(solutions))
+    assert result.best_obj_value == 9
+
+
+def test_single_local_optimum_is_recombined_with_itself():
+    # On the path 0-1-2 with k = 1 every local search ends at {1}, so each
+    # population holds a single individual.
+    model = Model()
+    model.add_edge(0, 1)
+    model.add_edge(1, 2)
+    result = model.solve(budget=1, stopping_criterion=MaxGenerations(3), display=False)
+    assert result.best_solution == {1}
+    assert result.best_obj_value == 0

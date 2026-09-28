@@ -119,7 +119,7 @@ CNDetector therefore applies a lighter parameter set automatically — see
 | `seed` | `0` | RNG seed (`0` is valid). |
 | `params` | `SolverParams()` | Tunable solver parameters (see below). |
 | `display` | `True` | Log progress to the package logger. |
-| `collect_stats` | `True` | Record a per-iteration trace in `Result.stats`. |
+| `collect_stats` | `True` | Record a per-generation trace in `Result.stats`. |
 
 ### Stopping criteria
 
@@ -138,18 +138,21 @@ from cndetector import SolverParams
 
 params = SolverParams(
     population_size=10,             # theta: size of each population
-    thread_count=2,                 # kappa: threads, and offspring per generation
+    thread_count=2,                 # kappa: offspring per population per generation
     interaction_period=20,          # beta: generations between two HPC calls
     relaxation_coefficient=0.05,    # alpha: auxiliary budget = floor(k * (1 - alpha))
     allowable_idle_iterations=1000, # gamma: idle-iteration budget of one L2NS run
     stagnation_threshold=500,       # delta: idle generations before reconstruction
-    search="L2NS",                  # local-search strategy
+    search="L2NS",                  # local search: "L2NS" or "CHNS"
+    crossover="RSC",                # crossover: "RSC" or "DBX"
 )
 ```
 
-These defaults are the irace-tuned values reported in the paper: `theta = 10`,
-`kappa = 2`, `beta = 20`, `alpha = 0.05`, `gamma = 1000`, `delta = 500`. DCNP
-overrides some of them automatically — see [Tuning DCNP](#tuning-dcnp).
+The values above are the irace-tuned defaults reported in the paper for CNP.
+`population_size`, `interaction_period` and `allowable_idle_iterations` default
+to `None`, which selects the tuned value of the problem being solved — see
+[Tuning DCNP](#tuning-dcnp); any value you pass is used as given.
+`relaxation_coefficient=0` makes the two populations homogeneous.
 
 Each L2NS run draws a destroy size `lambda` from `[1, 50]` and stops after
 `min(500, gamma / lambda)` idle iterations. The `l2ns_*` fields override that
@@ -158,30 +161,34 @@ schedule directly: `l2ns_min_destroy_size`, `l2ns_max_destroy_size`,
 `l2ns_impact_selection_rate`. `backbone_rate` is the probability that the RSC
 crossover keeps a node of the backbone shared by the two parents.
 
-`search` accepts `"L2NS"` (the default), `"L2NS-ADAPT"`, or `"L2NS<N>"` for a
-fixed destroy size (e.g. `"L2NS5"`). The latter two replace the random destroy
-size with a schedule that grows it as the search stalls.
+`search="CHNS"` and `crossover="DBX"` swap in the component-based hybrid
+neighborhood search and the double backbone-based crossover, the operators that
+L2NS and RSC replace. They are kept so the variants of the paper's ablation
+study can be rerun, and support CNP only.
 
 ### Parallelism
 
-`thread_count` (`kappa`) sets the number of worker threads, and each thread
-contributes exactly one offspring per population per generation. Parallelism
-affects wall-clock time only: for a fixed iteration budget the solver returns
-bit-identical solutions for any thread count. `set_max_threads` /
-`get_max_threads` expose the cap directly.
+`thread_count` (`kappa`) is both the number of offspring each population
+produces per generation and the number of worker threads they are computed on,
+so changing it changes the search itself. How many threads actually run it does
+not: for a fixed `kappa`, seed and generation budget the solver returns
+identical solutions on any machine, whatever its core count.
+`set_max_threads(n)` caps the worker threads below `kappa` (for instance to
+share a machine) without affecting the result; `get_max_threads()` reports the
+number currently in use.
 
 ### `Result`
 
 `Model.solve` returns a `Result` with `best_solution`, `best_obj_value`,
-`num_iterations`, `runtime`, `best_found_at_time`, an optional per-iteration
+`num_generations`, `runtime`, `best_found_at_time`, an optional per-generation
 `stats` list, and the final main population `main_population`.
 
 ## Tuning DCNP
 
 Evaluating the DCNP objective rebuilds the b-hop trees on every step, which
 makes one local search one to two orders of magnitude more expensive than for
-CNP. DCNP therefore uses a lighter parameter set, applied automatically **only
-when you leave these knobs at the library defaults**:
+CNP. DCNP therefore uses a lighter parameter set, applied automatically to
+**every knob you leave unset**:
 
 | Knob | CNP default | DCNP default |
 |------|-------------|--------------|
@@ -192,21 +199,8 @@ when you leave these knobs at the library defaults**:
 | `l2ns_idle_iteration_floor` | 1 | **20** |
 | `l2ns_idle_iteration_cap` | 500 | **80** |
 
-Passing an explicit value overrides it.
+Any value you pass explicitly is used as given, for both problems.
 
-## Development
-
-```bash
-pip install -e ".[dev]" --no-build-isolation   # dev dependencies
-pytest tests/                                    # run the tests
-python buildtools/build_extensions.py --build_type release   # recompile C++
-```
-
-> **macOS note.** On Apple Silicon, after recompiling and copying the native
-> extension (`_cndetector.*.so`), `import` may be killed by AMFI with SIGKILL (exit
-> code 137) because the copied Mach-O's signature is invalidated. Re-sign it
-> ad-hoc to fix it:
-> `codesign -f -s - cndetector/_cndetector.cpython-*-darwin.so`.
 
 ## License
 

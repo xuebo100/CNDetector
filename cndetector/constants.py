@@ -18,4 +18,10 @@ PACKAGE_LOGGER_NAME = "cndetector"
 
 CNP = "CNP"
 DCNP = "DCNP"
+
+# Local searches and crossovers. CHNS and DBX are the operators that L2NS and
+# RSC replace; they are kept for comparison and support CNP only.
 L2NS = "L2NS"
+CHNS = "CHNS"
+RSC = "RSC"
+DBX = "DBX"

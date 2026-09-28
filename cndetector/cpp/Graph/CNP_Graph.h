@@ -58,6 +58,9 @@ private:
     // number of connected node pairs it holds: |C|*(|C|-1)/2.
     int componentContribution(size_t size) const;
 
+    // selectRemovedComponentCHNS on residual graphs of more than 50 components.
+    ComponentIndex selectLargerComponentCHNS() const;
+
     // Tarjan algorithm auxiliary variables
     mutable std::vector<int> dfn_;         ///< Node discovery time
     mutable std::vector<int> lowVec_;      ///< Minimum discovery time reachable by node
@@ -247,6 +250,22 @@ public:
     // residual graph: those whose size is at least the midpoint between the
     // smallest and the largest component size.
     ComponentIndex selectRemovedComponent() const;
+
+    // Component-selection rule of the component-based hybrid neighborhood
+    // search (CHNS), also used by the double backbone-based crossover. With at
+    // most 50 components, draws uniformly among the components whose size
+    // reaches a randomly lowered midpoint: the midpoint between the smallest
+    // and the largest component of more than two nodes, minus 0, 1 or 2. With
+    // more than 50 components, draws among the above-average components with
+    // probability proportional to their size.
+    ComponentIndex selectRemovedComponentCHNS() const;
+
+    // Returns a node of the given component drawn uniformly at random.
+    Node randomSelectNodeFromComponent(ComponentIndex componentIndex) const;
+
+    // Reseeds the generator behind the graph's own random choices, so that
+    // copies of one graph can make independent choices.
+    void reseed(int seed);
 
     // Selects node to remove from component based on weight.
     Node ageSelectNodeFromComponent(ComponentIndex componentIndex) const;
