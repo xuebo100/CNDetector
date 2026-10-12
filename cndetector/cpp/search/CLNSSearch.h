@@ -1,14 +1,14 @@
-#ifndef L2NS_SEARCH_H
-#define L2NS_SEARCH_H
+#ifndef CLNS_SEARCH_H
+#define CLNS_SEARCH_H
 
 #include "../Graph/CNP_Graph.h"
 #include "DestroyRepairSearch.h"
 
-// Budget of one L2NS run; see runDestroyRepairSearch for how the fields drive
+// Budget of one CLNS run; see runDestroyRepairSearch for how the fields drive
 // the loop.
-struct L2NSConfig
+struct CLNSConfig
 {
-    // gamma: allowable number of idle (non-improving) iterations of one L2NS
+    // gamma: allowable number of idle (non-improving) iterations of one CLNS
     // run, before it is divided by the destroy size lambda.
     int allowableIdleIterations = 1000;
     // Each run draws its destroy size lambda uniformly from
@@ -37,11 +37,11 @@ int lccDrivenDestroy(
 // the node whose reinsertion degrades the objective the least.
 void greedyRepair(CNP_Graph &graph, int numNodes, long step);
 
-// LCC-oriented large neighbourhood search: the destroy-and-repair loop with
+// Component-oriented large neighborhood search: the destroy-and-repair loop with
 // the two operators above. The incumbent solution is carried by the graph's
 // removed-node set.
-LocalSearchResult runL2NS(
-    CNP_Graph &graph, int seed, const L2NSConfig &l2ns,
+LocalSearchResult runCLNS(
+    CNP_Graph &graph, int seed, const CLNSConfig &clns,
     Deadline deadline = noDeadline());
 
-#endif // L2NS_SEARCH_H
+#endif // CLNS_SEARCH_H

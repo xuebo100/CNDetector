@@ -13,8 +13,8 @@
 
 CNDetector finds the set of vertices whose removal most fragments a graph, using
 a **parallel co-evolutionary memetic search** — two complementary populations
-evolved in parallel by an RSC crossover, an LCC-oriented large neighbourhood
-search (L2NS) and periodic heterogeneous population cooperation, implemented in
+evolved in parallel by an RSC crossover, a component-oriented large neighborhood
+search (CLNS) and periodic heterogeneous population cooperation, implemented in
 C++ and exposed through pybind11.
 
 Given a graph and a budget `k`, the **Critical Node Problem (CNP)** asks which
@@ -141,9 +141,9 @@ params = SolverParams(
     thread_count=2,                 # kappa: offspring per population per generation
     interaction_period=20,          # beta: generations between two HPC calls
     relaxation_coefficient=0.05,    # alpha: auxiliary budget = floor(k * (1 - alpha))
-    allowable_idle_iterations=1000, # gamma: idle-iteration budget of one L2NS run
+    allowable_idle_iterations=1000, # gamma: idle-iteration budget of one CLNS run
     stagnation_threshold=500,       # delta: idle generations before reconstruction
-    search="L2NS",                  # local search: "L2NS" or "CHNS"
+    search="CLNS",                  # local search: "CLNS" or "CHNS"
     crossover="RSC",                # crossover: "RSC" or "DBX"
 )
 ```
@@ -154,16 +154,16 @@ to `None`, which selects the tuned value of the problem being solved — see
 [Tuning DCNP](#tuning-dcnp); any value you pass is used as given.
 `relaxation_coefficient=0` makes the two populations homogeneous.
 
-Each L2NS run draws a destroy size `lambda` from `[1, 50]` and stops after
-`min(500, gamma / lambda)` idle iterations. The `l2ns_*` fields override that
-schedule directly: `l2ns_min_destroy_size`, `l2ns_max_destroy_size`,
-`l2ns_idle_iteration_floor`, `l2ns_idle_iteration_cap` and
-`l2ns_impact_selection_rate`. `backbone_rate` is the probability that the RSC
+Each CLNS run draws a destroy size `lambda` from `[1, 50]` and stops after
+`min(500, gamma / lambda)` idle iterations. The `clns_*` fields override that
+schedule directly: `clns_min_destroy_size`, `clns_max_destroy_size`,
+`clns_idle_iteration_floor`, `clns_idle_iteration_cap` and
+`clns_impact_selection_rate`. `backbone_rate` is the probability that the RSC
 crossover keeps a node of the backbone shared by the two parents.
 
 `search="CHNS"` and `crossover="DBX"` swap in the component-based hybrid
 neighborhood search and the double backbone-based crossover, the operators that
-L2NS and RSC replace. They are kept so the variants of the paper's ablation
+CLNS and RSC replace. They are kept so the variants of the paper's ablation
 study can be rerun, and support CNP only.
 
 ### Parallelism
@@ -195,9 +195,9 @@ CNP. DCNP therefore uses a lighter parameter set, applied automatically to
 | `population_size` (theta) | 10 | **4** |
 | `interaction_period` (beta) | 20 | **5** |
 | `allowable_idle_iterations` (gamma) | 1000 | **100** |
-| `l2ns_max_destroy_size` | 50 | **15** |
-| `l2ns_idle_iteration_floor` | 1 | **20** |
-| `l2ns_idle_iteration_cap` | 500 | **80** |
+| `clns_max_destroy_size` | 50 | **15** |
+| `clns_idle_iteration_floor` | 1 | **20** |
+| `clns_idle_iteration_cap` | 500 | **80** |
 
 Any value you pass explicitly is used as given, for both problems.
 

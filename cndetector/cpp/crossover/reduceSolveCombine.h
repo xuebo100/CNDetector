@@ -8,7 +8,7 @@
 #include <string>
 
 // The defaults are the tuned values of the solver: theta = 10, kappa = 2,
-// beta = 20, alpha = 0.05, gamma = 1000 (L2NSConfig::allowableIdleIterations)
+// beta = 20, alpha = 0.05, gamma = 1000 (CLNSConfig::allowableIdleIterations)
 // and delta = 500.
 struct SolverConfig
 {
@@ -34,11 +34,11 @@ struct SolverConfig
     double displayInterval = 60.0;
     // Hard wall-clock budget in seconds. <= 0 means "no limit".
     double maxRuntime = 0.0;
-    // Local search refining every new solution: "L2NS" (default) or "CHNS".
-    std::string search = "L2NS";
+    // Local search refining every new solution: "CLNS" (default) or "CHNS".
+    std::string search = "CLNS";
     // Crossover producing the offspring: "RSC" (default) or "DBX".
     std::string crossover = "RSC";
-    L2NSConfig l2ns;
+    CLNSConfig clns;
     CHNSConfig chns;
 };
 

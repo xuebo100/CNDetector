@@ -36,12 +36,12 @@ void dcnpGreedyRepair(DCNP_Graph &graph, int numNodes, long step)
     }
 }
 
-LocalSearchResult runDCNPL2NS(
-    DCNP_Graph &graph, int seed, const L2NSConfig &l2ns, Deadline deadline)
+LocalSearchResult runDCNPCLNS(
+    DCNP_Graph &graph, int seed, const CLNSConfig &clns, Deadline deadline)
 {
     return runDestroyRepairSearch(
-        graph, seed, l2ns, deadline,
-        [&l2ns](DCNP_Graph &g, int destroySize, RandomNumberGenerator &rng, long step)
-        { return dcnpDestroy(g, destroySize, rng, l2ns.impactSelectionRate, step); },
+        graph, seed, clns, deadline,
+        [&clns](DCNP_Graph &g, int destroySize, RandomNumberGenerator &rng, long step)
+        { return dcnpDestroy(g, destroySize, rng, clns.impactSelectionRate, step); },
         [](DCNP_Graph &g, int numNodes, long step) { dcnpGreedyRepair(g, numNodes, step); });
 }

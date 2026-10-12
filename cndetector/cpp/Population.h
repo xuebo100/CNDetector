@@ -140,10 +140,10 @@ private:
     bool reachedDeadline() const;
 
     // One initial individual: a random solution of the given size, improved to
-    // a local optimum by the large neighbourhood search.
+    // a local optimum by the large neighborhood search.
     std::pair<Solution, int> generatePPIIndividual(int budget, int seed) const;
     // Recombine the two parents with the crossover, then refine the result with
-    // the large neighbourhood search.
+    // the large neighborhood search.
     std::pair<Solution, int> createOffspring(
         const ParentHandles &parents,
         std::optional<int> targetBudget,
@@ -195,7 +195,7 @@ private:
     int auxiliaryGenerationCount_ = 0;
     std::chrono::steady_clock::time_point startTime_;
     // Hard wall-clock deadline (startTime_ + config.maxRuntime). When the
-    // budget is unlimited this is time_point::max(). All L2NS calls are
+    // budget is unlimited this is time_point::max(). All CLNS calls are
     // bounded by it, and population initialization / generation steps bail
     // out as soon as it passes.
     std::chrono::steady_clock::time_point deadline_;

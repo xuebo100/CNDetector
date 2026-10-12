@@ -185,7 +185,7 @@ def test_custom_solver_params():
         relaxation_coefficient=0.5,
         allowable_idle_iterations=200,
         backbone_rate=0.7,
-        search="L2NS",
+        search="CLNS",
     )
     result = model.solve(
         budget=3,
@@ -419,7 +419,7 @@ def test_dcnp_defaults_apply_only_to_unset_parameters(monkeypatch):
         return (
             config.population_size,
             config.interaction_period,
-            config.l2ns.allowable_idle_iterations,
+            config.clns.allowable_idle_iterations,
         )
 
     assert tuned() == (4, 5, 100)
@@ -456,7 +456,7 @@ def test_thread_cap_does_not_change_the_result():
 
 @pytest.mark.parametrize(
     ("search", "crossover"),
-    [("CHNS", "RSC"), ("L2NS", "DBX"), ("CHNS", "DBX")],
+    [("CHNS", "RSC"), ("CLNS", "DBX"), ("CHNS", "DBX")],
 )
 def test_chns_and_dbx_solve_cnp(search, crossover):
     model = _sparse_model()
@@ -489,14 +489,14 @@ def test_chns_and_dbx_reject_dcnp(params):
 
 def test_unknown_search_or_crossover_is_rejected():
     with pytest.raises(ValueError):
-        SolverParams(search="L2NS-ADAPT")
+        SolverParams(search="CLNS-ADAPT")
     with pytest.raises(ValueError):
         SolverParams(crossover="IRR")
 
     from cndetector._cndetector import DualPopulation, SolverConfig
 
     config = SolverConfig()
-    config.search = "L2NS5"
+    config.search = "CLNS5"
     graph = _cycle_with_chords_model().problem_data.create_original_graph(2, 1)
     with pytest.raises(ValueError):
         DualPopulation(graph, 2, 1, config)

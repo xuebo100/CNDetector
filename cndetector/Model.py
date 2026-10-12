@@ -11,13 +11,13 @@ from .ProgressPrinter import ProgressPrinter
 from .Result import Result
 from .constants import (
     CHNS,
+    CLNS,
     CNP,
     DBX,
     DCNP,
     DEFAULT_ALLOWABLE_IDLE_ITERATIONS,
     DEFAULT_INTERACTION_PERIOD,
     DEFAULT_POPULATION_SIZE,
-    L2NS,
     PACKAGE_LOGGER_NAME,
     RSC,
 )
@@ -37,7 +37,7 @@ logger = logging.getLogger(PACKAGE_LOGGER_NAME)
 _DCNP_POPULATION_SIZE = 4  # theta
 _DCNP_INTERACTION_PERIOD = 5  # beta
 _DCNP_ALLOWABLE_IDLE_ITERATIONS = 100  # gamma
-_DCNP_L2NS_DEFAULTS: dict[str, "int | float"] = {
+_DCNP_CLNS_DEFAULTS: dict[str, "int | float"] = {
     # Destroy size sampled from [1, 15] and the per-run idle budget clipped to
     # [20, 80].
     "max_destroy_size": 15,
@@ -46,38 +46,38 @@ _DCNP_L2NS_DEFAULTS: dict[str, "int | float"] = {
 }
 
 
-def _apply_l2ns_overrides(
+def _apply_clns_overrides(
     config: "SolverConfig",
     params: SolverParams,
     dcnp_defaults: Optional[dict[str, "int | float"]] = None,
 ) -> None:
-    """Write the local-search destroy/idle schedule into ``config.l2ns``.
+    """Write the local-search destroy/idle schedule into ``config.clns``.
 
-    Priority: ``params.l2ns_*`` (explicitly set by the user) > ``dcnp_defaults``
+    Priority: ``params.clns_*`` (explicitly set by the user) > ``dcnp_defaults``
     (problem-specific) > native C++ defaults, which carry the tuned CNP
     values.
 
     Args:
-        config: native SolverConfig whose ``l2ns`` sub-config is mutated in place
-        params: solver parameters, read for its ``l2ns_*`` override fields
-        dcnp_defaults: problem-specific L2NS defaults (keys are l2ns field names,
+        config: native SolverConfig whose ``clns`` sub-config is mutated in place
+        params: solver parameters, read for its ``clns_*`` override fields
+        dcnp_defaults: problem-specific CLNS defaults (keys are clns field names,
             without the prefix)
     """
-    # l2ns field name -> the corresponding override attribute on params
+    # clns field name -> the corresponding override attribute on params
     field_to_param = {
-        "min_destroy_size": "l2ns_min_destroy_size",
-        "max_destroy_size": "l2ns_max_destroy_size",
-        "idle_iteration_floor": "l2ns_idle_iteration_floor",
-        "idle_iteration_cap": "l2ns_idle_iteration_cap",
-        "impact_selection_rate": "l2ns_impact_selection_rate",
+        "min_destroy_size": "clns_min_destroy_size",
+        "max_destroy_size": "clns_max_destroy_size",
+        "idle_iteration_floor": "clns_idle_iteration_floor",
+        "idle_iteration_cap": "clns_idle_iteration_cap",
+        "impact_selection_rate": "clns_impact_selection_rate",
     }
     defaults = dcnp_defaults or {}
-    for l2ns_field, param_attr in field_to_param.items():
+    for clns_field, param_attr in field_to_param.items():
         override = getattr(params, param_attr, None)
         if override is not None:
-            setattr(config.l2ns, l2ns_field, override)
-        elif l2ns_field in defaults:
-            setattr(config.l2ns, l2ns_field, defaults[l2ns_field])
+            setattr(config.clns, clns_field, override)
+        elif clns_field in defaults:
+            setattr(config.clns, clns_field, defaults[clns_field])
 
 
 def _normalize_main_population(
@@ -310,7 +310,7 @@ class Model:
         if dcnp:
             if not isinstance(distance, int) or distance < 1:
                 raise ValueError("distance must be a positive integer for DCNP")
-            if params.search != L2NS or params.crossover != RSC:
+            if params.search != CLNS or params.crossover != RSC:
                 raise ValueError(
                     f"the {CHNS} search and the {DBX} crossover support CNP only"
                 )
@@ -378,7 +378,7 @@ class Model:
         """Translate ``params`` into the native solver configuration.
 
         ``population_size``, ``interaction_period``,
-        ``allowable_idle_iterations`` and the ``l2ns_*`` fields left at
+        ``allowable_idle_iterations`` and the ``clns_*`` fields left at
         ``None`` take the tuned default of the problem being solved; explicit
         values are used as given. A ``max_runtime`` attribute on the stopping
         criterion becomes a hard wall-clock deadline of the native solver, so
@@ -420,12 +420,12 @@ class Model:
         config.display_interval = display_interval
 
         # gamma, then the finer schedule overrides of the local search.
-        config.l2ns.allowable_idle_iterations = problem_default(
+        config.clns.allowable_idle_iterations = problem_default(
             params.allowable_idle_iterations,
             DEFAULT_ALLOWABLE_IDLE_ITERATIONS, _DCNP_ALLOWABLE_IDLE_ITERATIONS,
         )
-        _apply_l2ns_overrides(
-            config, params, dcnp_defaults=_DCNP_L2NS_DEFAULTS if dcnp else None
+        _apply_clns_overrides(
+            config, params, dcnp_defaults=_DCNP_CLNS_DEFAULTS if dcnp else None
         )
 
         max_runtime = getattr(stopping_criterion, "max_runtime", None)

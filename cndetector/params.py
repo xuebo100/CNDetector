@@ -5,13 +5,13 @@ from typing import Optional
 
 from .constants import (
     CHNS,
+    CLNS,
     DBX,
     DEFAULT_BACKBONE_RATE,
     DEFAULT_DISPLAY_INTERVAL,
     DEFAULT_RELAXATION_COEFFICIENT,
     DEFAULT_STAGNATION_THRESHOLD,
     DEFAULT_THREAD_COUNT,
-    L2NS,
     RSC,
 )
 
@@ -24,7 +24,7 @@ class SolverParams:
     ``interaction_period`` and ``allowable_idle_iterations`` are tuned
     separately for CNP and DCNP; leaving them at ``None`` selects the tuned
     value of the problem being solved, while an explicit value is always used
-    as given. The ``l2ns_*`` fields are fine-grained overrides of the local
+    as given. The ``clns_*`` fields are fine-grained overrides of the local
     search's destroy-size and idle-budget schedule; they also default to
     ``None``, meaning "keep the problem's default".
     """
@@ -52,22 +52,22 @@ class SolverParams:
     # shared by the two parents. Not one of the tuned parameters above.
     backbone_rate: float = DEFAULT_BACKBONE_RATE
     display_interval: float = DEFAULT_DISPLAY_INTERVAL
-    # Local search refining every new solution: "L2NS", or "CHNS", the
+    # Local search refining every new solution: "CLNS", or "CHNS", the
     # component-based hybrid neighborhood search it replaces (CNP only).
-    search: str = L2NS
+    search: str = CLNS
     # Crossover producing the offspring: "RSC", or "DBX", the double
     # backbone-based crossover it replaces (CNP only).
     crossover: str = RSC
 
-    # L2NS schedule overrides (None -> keep the problem's default). lambda is
-    # drawn from [l2ns_min_destroy_size, l2ns_max_destroy_size] and the per-run
-    # idle budget is clamped to [l2ns_idle_iteration_floor,
-    # l2ns_idle_iteration_cap].
-    l2ns_min_destroy_size: Optional[int] = None
-    l2ns_max_destroy_size: Optional[int] = None
-    l2ns_idle_iteration_floor: Optional[int] = None
-    l2ns_idle_iteration_cap: Optional[int] = None
-    l2ns_impact_selection_rate: Optional[float] = None
+    # CLNS schedule overrides (None -> keep the problem's default). lambda is
+    # drawn from [clns_min_destroy_size, clns_max_destroy_size] and the per-run
+    # idle budget is clamped to [clns_idle_iteration_floor,
+    # clns_idle_iteration_cap].
+    clns_min_destroy_size: Optional[int] = None
+    clns_max_destroy_size: Optional[int] = None
+    clns_idle_iteration_floor: Optional[int] = None
+    clns_idle_iteration_cap: Optional[int] = None
+    clns_impact_selection_rate: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.population_size is not None and self.population_size < 2:
@@ -87,33 +87,33 @@ class SolverParams:
             raise ValueError("backbone_rate must be in [0, 1].")
         if self.display_interval <= 0:
             raise ValueError("display_interval must be positive.")
-        if self.search not in (L2NS, CHNS):
-            raise ValueError(f"search must be {L2NS!r} or {CHNS!r}.")
+        if self.search not in (CLNS, CHNS):
+            raise ValueError(f"search must be {CLNS!r} or {CHNS!r}.")
         if self.crossover not in (RSC, DBX):
             raise ValueError(f"crossover must be {RSC!r} or {DBX!r}.")
 
         for field_name in (
-            "l2ns_min_destroy_size",
-            "l2ns_max_destroy_size",
-            "l2ns_idle_iteration_floor",
-            "l2ns_idle_iteration_cap",
+            "clns_min_destroy_size",
+            "clns_max_destroy_size",
+            "clns_idle_iteration_floor",
+            "clns_idle_iteration_cap",
         ):
             value = getattr(self, field_name)
             if value is not None and value < 1:
                 raise ValueError(f"{field_name} must be >= 1.")
 
-        if (self.l2ns_impact_selection_rate is not None
-                and not 0 <= self.l2ns_impact_selection_rate <= 1):
-            raise ValueError("l2ns_impact_selection_rate must be in [0, 1].")
-        if (self.l2ns_min_destroy_size is not None
-                and self.l2ns_max_destroy_size is not None
-                and self.l2ns_min_destroy_size > self.l2ns_max_destroy_size):
+        if (self.clns_impact_selection_rate is not None
+                and not 0 <= self.clns_impact_selection_rate <= 1):
+            raise ValueError("clns_impact_selection_rate must be in [0, 1].")
+        if (self.clns_min_destroy_size is not None
+                and self.clns_max_destroy_size is not None
+                and self.clns_min_destroy_size > self.clns_max_destroy_size):
             raise ValueError(
-                "l2ns_min_destroy_size must be <= l2ns_max_destroy_size."
+                "clns_min_destroy_size must be <= clns_max_destroy_size."
             )
-        if (self.l2ns_idle_iteration_floor is not None
-                and self.l2ns_idle_iteration_cap is not None
-                and self.l2ns_idle_iteration_floor > self.l2ns_idle_iteration_cap):
+        if (self.clns_idle_iteration_floor is not None
+                and self.clns_idle_iteration_cap is not None
+                and self.clns_idle_iteration_floor > self.clns_idle_iteration_cap):
             raise ValueError(
-                "l2ns_idle_iteration_floor must be <= l2ns_idle_iteration_cap."
+                "clns_idle_iteration_floor must be <= clns_idle_iteration_cap."
             )

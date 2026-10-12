@@ -55,7 +55,7 @@ libgraph = static_library(
 libsearch = static_library(
     'search',
     [
-        SRC_DIR / 'search' / 'L2NSSearch.cpp',
+        SRC_DIR / 'search' / 'CLNSSearch.cpp',
         SRC_DIR / 'search' / 'CHNSSearch.cpp',
         SRC_DIR / 'search' / 'DCNPSearch.cpp',
     ],

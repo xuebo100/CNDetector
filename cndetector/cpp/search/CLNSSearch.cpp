@@ -1,4 +1,4 @@
-#include "L2NSSearch.h"
+#include "CLNSSearch.h"
 
 int lccDrivenDestroy(
     CNP_Graph &graph, int destroySize, RandomNumberGenerator &rng,
@@ -33,12 +33,12 @@ void greedyRepair(CNP_Graph &graph, int numNodes, long step)
     }
 }
 
-LocalSearchResult runL2NS(
-    CNP_Graph &graph, int seed, const L2NSConfig &l2ns, Deadline deadline)
+LocalSearchResult runCLNS(
+    CNP_Graph &graph, int seed, const CLNSConfig &clns, Deadline deadline)
 {
     return runDestroyRepairSearch(
-        graph, seed, l2ns, deadline,
-        [&l2ns](CNP_Graph &g, int destroySize, RandomNumberGenerator &rng, long step)
-        { return lccDrivenDestroy(g, destroySize, rng, l2ns.impactSelectionRate, step); },
+        graph, seed, clns, deadline,
+        [&clns](CNP_Graph &g, int destroySize, RandomNumberGenerator &rng, long step)
+        { return lccDrivenDestroy(g, destroySize, rng, clns.impactSelectionRate, step); },
         [](CNP_Graph &g, int numNodes, long step) { greedyRepair(g, numNodes, step); });
 }

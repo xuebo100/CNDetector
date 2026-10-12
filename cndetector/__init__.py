@@ -9,11 +9,11 @@ from .Result import Result
 from ._cndetector import get_max_threads, set_max_threads
 from .constants import (
     CHNS,
+    CLNS,
     CNP,
     DBX,
     DCNP,
     DEFAULT_DISPLAY_INTERVAL,
-    L2NS,
     PACKAGE_LOGGER_NAME,
     RSC,
 )
@@ -42,11 +42,11 @@ except metadata.PackageNotFoundError:
 
 __all__ = [
     "CHNS",
+    "CLNS",
     "CNP",
     "DBX",
     "DCNP",
     "DEFAULT_DISPLAY_INTERVAL",
-    "L2NS",
     "RSC",
     "MaxGenerations",
     "MaxRuntime",

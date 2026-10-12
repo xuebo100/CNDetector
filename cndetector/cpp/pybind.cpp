@@ -5,7 +5,7 @@
 #include "ProblemData.h"
 #include "crossover/reduceSolveCombine.h"
 #include "search/CHNSSearch.h"
-#include "search/L2NSSearch.h"
+#include "search/CLNSSearch.h"
 #include "search/DCNPSearch.h"
 
 #include <pybind11/functional.h>
@@ -194,18 +194,18 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("max_runtime", &SolverConfig::maxRuntime)
         .def_readwrite("search", &SolverConfig::search)
         .def_readwrite("crossover", &SolverConfig::crossover)
-        .def_readwrite("l2ns", &SolverConfig::l2ns)
+        .def_readwrite("clns", &SolverConfig::clns)
         .def_readwrite("chns", &SolverConfig::chns);
 
-    // L2NSConfig
-    py::class_<L2NSConfig>(m, "L2NSConfig")
+    // CLNSConfig
+    py::class_<CLNSConfig>(m, "CLNSConfig")
         .def(py::init<>())
-        .def_readwrite("allowable_idle_iterations", &L2NSConfig::allowableIdleIterations)
-        .def_readwrite("min_destroy_size", &L2NSConfig::minDestroySize)
-        .def_readwrite("max_destroy_size", &L2NSConfig::maxDestroySize)
-        .def_readwrite("idle_iteration_cap", &L2NSConfig::idleIterationCap)
-        .def_readwrite("idle_iteration_floor", &L2NSConfig::idleIterationFloor)
-        .def_readwrite("impact_selection_rate", &L2NSConfig::impactSelectionRate);
+        .def_readwrite("allowable_idle_iterations", &CLNSConfig::allowableIdleIterations)
+        .def_readwrite("min_destroy_size", &CLNSConfig::minDestroySize)
+        .def_readwrite("max_destroy_size", &CLNSConfig::maxDestroySize)
+        .def_readwrite("idle_iteration_cap", &CLNSConfig::idleIterationCap)
+        .def_readwrite("idle_iteration_floor", &CLNSConfig::idleIterationFloor)
+        .def_readwrite("impact_selection_rate", &CLNSConfig::impactSelectionRate);
 
     // CHNSConfig
     py::class_<CHNSConfig>(m, "CHNSConfig")
@@ -246,11 +246,11 @@ PYBIND11_MODULE(_cndetector, m)
         .def_readwrite("obj_value", &LocalSearchResult::objValue);
 
     // Free functions
-    m.def("run_l2ns",
-          [](CNP_Graph &graph, int seed, const L2NSConfig &config)
+    m.def("run_clns",
+          [](CNP_Graph &graph, int seed, const CLNSConfig &config)
           {
               py::gil_scoped_release release;
-              return runL2NS(graph, seed, config);
+              return runCLNS(graph, seed, config);
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
@@ -262,11 +262,11 @@ PYBIND11_MODULE(_cndetector, m)
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 
-    m.def("run_dcnp_l2ns",
-          [](DCNP_Graph &graph, int seed, const L2NSConfig &config)
+    m.def("run_dcnp_clns",
+          [](DCNP_Graph &graph, int seed, const CLNSConfig &config)
           {
               py::gil_scoped_release release;
-              return runDCNPL2NS(graph, seed, config);
+              return runDCNPCLNS(graph, seed, config);
           },
           py::arg("graph"), py::arg("seed"), py::arg("config"));
 

@@ -2,9 +2,9 @@
 #define DCNP_SEARCH_H
 
 #include "../Graph/DCNP_Graph.h"
-#include "L2NSSearch.h"
+#include "CLNSSearch.h"
 
-// DCNP counterparts of the two L2NS operators. The residual graph of the DCNP
+// DCNP counterparts of the two CLNS operators. The residual graph of the DCNP
 // has no meaningful connected components, so instead of drawing from a large
 // connected component the destroy operator removes, with probability
 // impactSelectionRate, the node whose removal cuts the most b-hop pairs, and a
@@ -15,10 +15,10 @@ int dcnpDestroy(
 
 void dcnpGreedyRepair(DCNP_Graph &graph, int numNodes, long step);
 
-// The DCNP variant of the large neighbourhood search: same destroy/repair loop
+// The DCNP variant of the large neighborhood search: same destroy/repair loop
 // and same stopping rule, with the operators above.
-LocalSearchResult runDCNPL2NS(
-    DCNP_Graph &graph, int seed, const L2NSConfig &l2ns,
+LocalSearchResult runDCNPCLNS(
+    DCNP_Graph &graph, int seed, const CLNSConfig &clns,
     Deadline deadline = noDeadline());
 
 #endif // DCNP_SEARCH_H

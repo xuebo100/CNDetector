@@ -77,11 +77,11 @@ class SolverConfig:
     max_runtime: float
     search: str
     crossover: str
-    l2ns: L2NSConfig
+    clns: CLNSConfig
     chns: CHNSConfig
     def __init__(self) -> None: ...
 
-class L2NSConfig:
+class CLNSConfig:
     allowable_idle_iterations: int
     min_destroy_size: int
     max_destroy_size: int
@@ -152,14 +152,14 @@ class DCNPDualPopulation:
     def get_main_population_size(self) -> int: ...
     def get_main_generation_count(self) -> int: ...
 
-def run_l2ns(
-    graph: CNP_Graph, seed: int, config: L2NSConfig
+def run_clns(
+    graph: CNP_Graph, seed: int, config: CLNSConfig
 ) -> LocalSearchResult: ...
 def run_chns(
     graph: CNP_Graph, seed: int, config: CHNSConfig
 ) -> LocalSearchResult: ...
-def run_dcnp_l2ns(
-    graph: DCNP_Graph, seed: int, config: L2NSConfig
+def run_dcnp_clns(
+    graph: DCNP_Graph, seed: int, config: CLNSConfig
 ) -> LocalSearchResult: ...
 def set_max_threads(count: int) -> None: ...
 def get_max_threads() -> int: ...

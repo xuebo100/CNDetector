@@ -39,7 +39,7 @@ DualPopulationT<GraphT>::DualPopulationT(
 {
     if constexpr (!std::is_same_v<GraphT, CNP_Graph>)
     {
-        if (search_.strategy != SearchStrategy::L2NS
+        if (search_.strategy != SearchStrategy::CLNS
             || crossover_ != CrossoverStrategy::RSC)
         {
             throw std::invalid_argument(

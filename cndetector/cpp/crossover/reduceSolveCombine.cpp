@@ -26,11 +26,11 @@ int deterministicSeed(
 LocalSearchSettings resolveLocalSearch(const SolverConfig &config)
 {
     LocalSearchSettings settings;
-    settings.l2ns = config.l2ns;
+    settings.clns = config.clns;
     settings.chns = config.chns;
-    if (config.search == "L2NS")
+    if (config.search == "CLNS")
     {
-        settings.strategy = SearchStrategy::L2NS;
+        settings.strategy = SearchStrategy::CLNS;
     }
     else if (config.search == "CHNS")
     {
@@ -40,7 +40,7 @@ LocalSearchSettings resolveLocalSearch(const SolverConfig &config)
     {
         throw std::invalid_argument(
             "unsupported search strategy \"" + config.search
-            + "\"; expected \"L2NS\" or \"CHNS\"");
+            + "\"; expected \"CLNS\" or \"CHNS\"");
     }
     return settings;
 }
