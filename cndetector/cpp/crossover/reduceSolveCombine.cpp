@@ -1,0 +1,148 @@
+#include "reduceSolveCombine.h"
+#include "../Graph/DCNP_Graph.h"
+#include "../RandomNumberGenerator.h"
+#include <stdexcept>
+
+uint64_t splitmix64(uint64_t value)
+{
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+}
+
+int deterministicSeed(
+    int baseSeed, uint64_t streamId, uint64_t iteration, uint64_t slot)
+{
+    uint64_t value = splitmix64(static_cast<uint32_t>(baseSeed));
+    value ^= splitmix64(streamId);
+    value ^= splitmix64(iteration);
+    value ^= splitmix64(slot);
+
+    const int seed = static_cast<int>(value & 0x7fffffff);
+    return seed == 0 ? 1 : seed;
+}
+
+LocalSearchSettings resolveLocalSearch(const SolverConfig &config)
+{
+    LocalSearchSettings settings;
+    settings.clns = config.clns;
+    settings.chns = config.chns;
+    if (config.search == "CLNS")
+    {
+        settings.strategy = SearchStrategy::CLNS;
+    }
+    else if (config.search == "CHNS")
+    {
+        settings.strategy = SearchStrategy::CHNS;
+    }
+    else
+    {
+        throw std::invalid_argument(
+            "unsupported search strategy \"" + config.search
+            + "\"; expected \"CLNS\" or \"CHNS\"");
+    }
+    return settings;
+}
+
+CrossoverStrategy resolveCrossover(const SolverConfig &config)
+{
+    if (config.crossover == "RSC")
+    {
+        return CrossoverStrategy::RSC;
+    }
+    if (config.crossover == "DBX")
+    {
+        return CrossoverStrategy::DBX;
+    }
+    throw std::invalid_argument(
+        "unsupported crossover \"" + config.crossover
+        + "\"; expected \"RSC\" or \"DBX\"");
+}
+
+template <typename GraphT>
+std::unique_ptr<GraphT> reduceSolveCombine(
+    const GraphT &originalGraph,
+    const std::pair<const Solution *, const Solution *> &parents,
+    double backboneRate,
+    std::optional<int> targetBudget,
+    int seed,
+    const LocalSearchSettings &search,
+    Deadline deadline)
+{
+    if (backboneRate < 0.0 || backboneRate > 1.0)
+    {
+        throw std::invalid_argument(
+            "backboneRate for the RSC crossover must be in [0, 1]");
+    }
+
+    RandomNumberGenerator rng;
+    rng.setSeed(seed);
+
+    const auto &lhs = *parents.first;
+    const auto &rhs = *parents.second;
+
+    Solution nodesToRemove;
+    nodesToRemove.reserve(std::min(lhs.size(), rhs.size()));
+
+    const int maxCommonToRemove = targetBudget.has_value()
+        ? std::max(0, *targetBudget - 1)
+        : static_cast<int>(std::min(lhs.size(), rhs.size()));
+
+    for (Node node : lhs)
+    {
+        if (static_cast<int>(nodesToRemove.size()) >= maxCommonToRemove)
+        {
+            break;
+        }
+        if (rhs.contains(node) && rng.generateProbability() < backboneRate)
+        {
+            nodesToRemove.insert(node);
+        }
+    }
+
+    auto workingGraph = originalGraph.clone();
+    workingGraph->getReducedGraphByRemovedNodes(nodesToRemove);
+
+    std::unique_ptr<GraphT> reducedGraph;
+    if (targetBudget.has_value())
+    {
+        const int remainingBudget
+            = *targetBudget - static_cast<int>(nodesToRemove.size());
+        if (remainingBudget <= 0)
+        {
+            reducedGraph = std::move(workingGraph);
+        }
+        else
+        {
+            reducedGraph = workingGraph->getRandomPartialGraph(
+                remainingBudget, deterministicSeed(seed, 0x5001u));
+        }
+    }
+    else
+    {
+        reducedGraph = workingGraph->getRandomFullBudgetGraph(
+            deterministicSeed(seed, 0x5002u));
+    }
+
+    const LocalSearchResult result
+        = runLocalSearch(*reducedGraph, deterministicSeed(seed, 0x5003u),
+                         search, deadline);
+
+    Solution finalNodes = nodesToRemove;
+    finalNodes.insert(result.solution.begin(), result.solution.end());
+
+    auto improvedGraph = originalGraph.clone();
+    improvedGraph->updateGraphByRemovedNodes(finalNodes);
+    return improvedGraph;
+}
+
+template std::unique_ptr<CNP_Graph> reduceSolveCombine<CNP_Graph>(
+    const CNP_Graph &,
+    const std::pair<const Solution *, const Solution *> &,
+    double, std::optional<int>, int, const LocalSearchSettings &, Deadline);
+
+template std::unique_ptr<DCNP_Graph> reduceSolveCombine<DCNP_Graph>(
+    const DCNP_Graph &,
+    const std::pair<const Solution *, const Solution *> &,
+    double, std::optional<int>, int, const LocalSearchSettings &, Deadline);
